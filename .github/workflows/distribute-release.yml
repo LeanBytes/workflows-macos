@@ -38,9 +38,15 @@ on:
       use-tuist:
         type: boolean
         default: false
-      cache-whisper-model:
-        type: boolean
-        default: false
+      pre-build-cache-path:
+        type: string
+        default: ""
+      pre-build-cache-key:
+        type: string
+        default: ""
+      pre-build-script:
+        type: string
+        default: ""
       has-finder-extension:
         type: boolean
         default: false
@@ -130,7 +136,9 @@ jobs:
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
       use-tuist: ${{ inputs.use-tuist }}
-      cache-whisper-model: ${{ inputs.cache-whisper-model }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
       has-finder-extension: ${{ inputs.has-finder-extension }}
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}

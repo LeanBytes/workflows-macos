@@ -101,11 +101,38 @@ Copy from `examples/per-app/`:
 
 Uncomment per-app inputs (use-tuist, enable-app-store, has-finder-extension, etc.) as needed. Reference table:
 
-| App | use-tuist | cache-whisper-model | enable-app-store | publish-beta-appcast | has-finder-extension | has-quicklook-extension |
-|---|---|---|---|---|---|---|
-| FlowMoose | ✓ | ✓ | — | ✓ | — | — |
-| filefillet | — | — | ✓ | — | — | — |
-| macpacker | — | — | ✓ | — | ✓ | ✓ |
+| App | use-tuist | enable-app-store | publish-beta-appcast | has-finder-extension | has-quicklook-extension |
+|---|---|---|---|---|---|
+| FlowMoose | ✓ | — | ✓ | — | — |
+| filefillet | — | ✓ | — | — | — |
+| macpacker | — | ✓ | — | ✓ | ✓ |
+
+### 5. Pre-build hooks (app-specific assets)
+
+For apps that need extra setup on the build runner (asset downloads, codegen, etc.), the build callee exposes generic `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the caller's repo, so no app-specific paths or URLs leak into the shared workflow.
+
+FlowMoose example — downloading the Whisper model from HuggingFace:
+
+```yaml
+# In FlowMoose's distribute-pr.yml / distribute-beta.yml / distribute-release.yml shell:
+with:
+  pre-build-cache-path: FlowMoose/Models/ggml-base.bin
+  pre-build-cache-key:  whisper-base-model-v1
+  pre-build-script:     .ci/download-whisper-model.sh
+```
+
+```bash
+# .ci/download-whisper-model.sh inside FlowMoose's repo
+#!/usr/bin/env bash
+set -euo pipefail
+SIZE=$(wc -c < FlowMoose/Models/ggml-base.bin 2>/dev/null || echo 0)
+if [ "$SIZE" -lt 100000000 ]; then
+  curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" \
+    -o FlowMoose/Models/ggml-base.bin
+fi
+```
+
+The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty, which is the default for filefillet and macpacker.
 
 ## Versioning
 

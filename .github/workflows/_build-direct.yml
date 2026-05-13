@@ -50,11 +50,21 @@ on:
         type: boolean
         default: false
 
-      # ── Optional caches ────────────────────────────────────────────────────
-      cache-whisper-model:
-        description: "Cache + download Whisper ggml-base.bin from HuggingFace into FlowMoose/Models/"
-        type: boolean
-        default: false
+      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      # Asset downloads, codegen, etc. that an app needs ON the build runner
+      # before xcodebuild archive. Keeps the shared workflow app-agnostic.
+      pre-build-cache-path:
+        description: "Path to cache via actions/cache@v4 (e.g. 'MyApp/Models/asset.bin'). Empty = no cache."
+        type: string
+        default: ""
+      pre-build-cache-key:
+        description: "Cache key. Required when pre-build-cache-path is set."
+        type: string
+        default: ""
+      pre-build-script:
+        description: "Path (relative to caller repo) of a bash script to run before archive. Sees the cache-restored files."
+        type: string
+        default: ""
 
       # ── Extensions ─────────────────────────────────────────────────────────
       has-finder-extension:
@@ -114,26 +124,18 @@ jobs:
             -scheme "${{ vars.SCHEME_NAME }}" \
             -configuration Release
 
-      # ── Whisper base model (opt-in) ────────────────────────────────────────
-      - name: Cache Whisper base model
-        if: inputs.cache-whisper-model
+      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      - name: Pre-build cache
+        if: inputs.pre-build-cache-path != ''
         uses: actions/cache@v4
         with:
-          path: FlowMoose/Models/ggml-base.bin
-          key: whisper-base-model-v1
+          path: ${{ inputs.pre-build-cache-path }}
+          key: ${{ inputs.pre-build-cache-key }}
 
-      - name: Download Whisper base model
-        if: inputs.cache-whisper-model
+      - name: Pre-build script
+        if: inputs.pre-build-script != ''
         shell: bash
-        run: |
-          set -euo pipefail
-          SIZE=$(wc -c < FlowMoose/Models/ggml-base.bin 2>/dev/null || echo 0)
-          if [ "$SIZE" -lt 100000000 ]; then
-            echo "Downloading ggml-base.bin from HuggingFace..."
-            curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin" \
-              -o FlowMoose/Models/ggml-base.bin
-          fi
-          ls -lh FlowMoose/Models/ggml-base.bin
+        run: bash "${{ inputs.pre-build-script }}"
 
       # ── Keychain ───────────────────────────────────────────────────────────
       - name: Set up keychain

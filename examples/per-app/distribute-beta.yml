@@ -26,10 +26,15 @@ jobs:
 
       # ── Per-app build flags ─────────────────────────────────────────────
       # use-tuist: true                # FlowMoose
-      # cache-whisper-model: true      # FlowMoose
       # has-finder-extension: true     # macpacker
       # has-quicklook-extension: true  # macpacker
       # extra-xcodebuild-args: ""
+
+      # ── Pre-build hooks (e.g. asset download) ──────────────────────────
+      # Example: FlowMoose downloading its Whisper model:
+      # pre-build-cache-path: FlowMoose/Models/ggml-base.bin
+      # pre-build-cache-key: whisper-base-model-v1
+      # pre-build-script: .ci/download-whisper-model.sh
 
       # ── Runners ─────────────────────────────────────────────────────────
       # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
