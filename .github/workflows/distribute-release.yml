@@ -1,0 +1,392 @@
+# ── Release Distribution Orchestrator ────────────────────────────────────────
+# Called from a per-app shell triggered on tag push (push: tags: ['v*.*.*']).
+# Builds Direct (always) and App Store (optional), then publishes in strict
+# fail-safe order. Crucially: GH Release object is created LAST, so a failed
+# build never leaves a dangling release.
+#
+#   1. Fetch GH auto-notes (no Release object yet)
+#   2. App Store / TestFlight upload  (if enable-app-store)         ← GATE 1
+#   3. S3 upload of DMG/ZIP                                          (silent)
+#   4. Stable appcast update + upload (if publish-appcast)           ← MAKES STABLE VISIBLE
+#   5. GitHub Release creation                                       ← LAST
+#
+# Per-app shell example:
+#
+#   on:
+#     push:
+#       tags: ['v*.*.*']
+#   jobs:
+#     release:
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.1
+#       with:
+#         enable-app-store: true        # macpacker, filefillet
+#       secrets: inherit
+# ─────────────────────────────────────────────────────────────────────────────
+name: distribute-release
+
+on:
+  workflow_call:
+    inputs:
+      enable-app-store:
+        description: "Build for App Store and push via altool"
+        type: boolean
+        default: false
+      publish-appcast:
+        description: "Update Sparkle's stable appcast with this release"
+        type: boolean
+        default: true
+      use-tuist:
+        type: boolean
+        default: false
+      cache-whisper-model:
+        type: boolean
+        default: false
+      has-finder-extension:
+        type: boolean
+        default: false
+      has-quicklook-extension:
+        type: boolean
+        default: false
+      extra-xcodebuild-args:
+        type: string
+        default: ""
+      runs-on-build:
+        type: string
+        default: '"macos-26"'
+      runs-on-publish:
+        type: string
+        default: '"macos-26"'
+      appcast-filename:
+        type: string
+        default: "appcast.xml"
+      appcast-seed-path:
+        type: string
+        default: "Config/appcast.xml"
+
+permissions:
+  contents: write          # to create GH Release
+  pull-requests: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      build-number: ${{ steps.compute.outputs.build-number }}
+      artifact-label: ${{ steps.compute.outputs.artifact-label }}
+      previous-tag: ${{ steps.previous.outputs.previous-tag }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.workflow_sha }}
+          path: .shared-ci
+
+      - name: Compute version + label
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          VERSION=$(.shared-ci/.github/scripts/version-derive.sh release "${{ github.ref }}")
+          ARTIFACT_LABEL="v${VERSION}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
+
+          echo "Release build prepared:"
+          echo "  Marketing version: ${VERSION}"
+          echo "  Build number:      ${BUILD_NUMBER}"
+          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+
+      - name: Find previous stable tag
+        id: previous
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Most recent stable tag BEFORE the one we're releasing.
+          CURRENT="${{ github.ref_name }}"
+          PREV=$(git describe --tags --match='v*.*.*' --exclude='*-beta-*' --exclude="$CURRENT" --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            echo "::warning::No previous stable tag found — release notes will be empty"
+          fi
+          echo "previous-tag=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Previous stable tag: ${PREV:-<none>}"
+
+  build-direct:
+    needs: prepare
+    uses: ./.github/workflows/_build-direct.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      use-tuist: ${{ inputs.use-tuist }}
+      cache-whisper-model: ${{ inputs.cache-whisper-model }}
+      has-finder-extension: ${{ inputs.has-finder-extension }}
+      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+    secrets: inherit
+
+  build-app-store:
+    if: inputs.enable-app-store
+    needs: prepare
+    uses: ./.github/workflows/_build-app-store.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      use-tuist: ${{ inputs.use-tuist }}
+      has-finder-extension: ${{ inputs.has-finder-extension }}
+      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+    secrets: inherit
+
+  publish-release:
+    needs: [prepare, build-direct, build-app-store]
+    if: |
+      always() &&
+      needs.build-direct.result == 'success' &&
+      (needs.build-app-store.result == 'success' || needs.build-app-store.result == 'skipped')
+    runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.workflow_sha }}
+          path: .shared-ci
+
+      - name: Download direct-build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: direct-build
+          path: ./artifacts/direct
+
+      - name: Download app-store-build artifact
+        if: inputs.enable-app-store
+        uses: actions/download-artifact@v4
+        with:
+          name: app-store-build
+          path: ./artifacts/app-store
+
+      # ── Fetch release notes (Markdown from GH auto-notes) ─────────────────
+      # Compute notes BEFORE creating the GH Release, so the Release is the
+      # very last thing to land if everything else succeeds.
+      - name: Fetch GitHub auto-generated release notes
+        if: env.PREVIOUS_TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PREVIOUS_TAG="$PREVIOUS_TAG" \
+          TARGET="${{ github.ref_name }}" \
+          .shared-ci/.github/scripts/release-notes-fetch.sh > /tmp/notes.md
+          echo "Notes written ($(wc -c < /tmp/notes.md) bytes)"
+
+      - name: Enrich release notes with Jira summaries
+        if: env.PREVIOUS_TAG != ''
+        shell: bash
+        env:
+          IN_PATH: /tmp/notes.md
+          OUT_PATH: /tmp/notes.md
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_KEY_PREFIX: ${{ vars.JIRA_KEY_PREFIX || 'LB' }}
+        run: |
+          set -euo pipefail
+          .shared-ci/.github/scripts/enrich-changelog-with-jira.sh
+
+      # ── GATE 1: App Store upload ──────────────────────────────────────────
+      - name: Install App Store Connect API key (for altool)
+        if: inputs.enable-app-store
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_BASE64" | base64 --decode \
+            > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Upload to App Store Connect
+        if: inputs.enable-app-store
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          PKG=$(ls ./artifacts/app-store/*.pkg | head -1)
+          [ -f "$PKG" ] || { echo "::error::No .pkg in app-store artifact"; exit 1; }
+
+          xcrun altool --upload-app \
+            --type macos \
+            --file "$PKG" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+          echo "App Store Connect upload accepted: $(basename "$PKG")"
+
+      # ── S3 upload of DMG/ZIP (still silent — appcast hasn't moved) ────────
+      - name: Install AWS CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v aws &>/dev/null; then
+            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o /tmp/AWSCLIV2.pkg
+            sudo installer -pkg /tmp/AWSCLIV2.pkg -target /
+            rm -f /tmp/AWSCLIV2.pkg
+          fi
+          aws --version
+
+      - name: Upload DMG + ZIP to S3
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+        run: |
+          set -euo pipefail
+          for f in ./artifacts/direct/*.dmg ./artifacts/direct/*.zip; do
+            [ -e "$f" ] || continue
+            BASENAME=$(basename "$f")
+            aws s3 cp "$f" "${S3_DISTRIBUTION_PATH}/${BASENAME}"
+            echo "Uploaded ${BASENAME}"
+          done
+
+      # ── GATE 2: Stable appcast update + upload ────────────────────────────
+      - name: Download Sparkle
+        if: inputs.publish-appcast
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SPARKLE_TAG=$(gh api /repos/sparkle-project/Sparkle/releases/latest --jq '.tag_name')
+          echo "Sparkle version: ${SPARKLE_TAG}"
+          curl -fL -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_TAG}/Sparkle-${SPARKLE_TAG}.tar.xz"
+          mkdir -p /tmp/sparkle
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          chmod +x /tmp/sparkle/bin/generate_appcast
+
+      - name: Prepare appcast workdir
+        if: inputs.publish-appcast
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+          APPCAST_SEED_PATH: ${{ inputs.appcast-seed-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/appcast-work
+          cp ./artifacts/direct/*.zip /tmp/appcast-work/
+
+          if aws s3 cp "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" "/tmp/appcast-work/${APPCAST_FILENAME}"; then
+            echo "Downloaded existing ${APPCAST_FILENAME} from S3"
+          else
+            echo "No ${APPCAST_FILENAME} on S3, using seed: ${APPCAST_SEED_PATH}"
+            cp "${APPCAST_SEED_PATH}" "/tmp/appcast-work/${APPCAST_FILENAME}"
+          fi
+
+      - name: Run generate_appcast (stable channel)
+        if: inputs.publish-appcast
+        shell: bash
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          # No --channel flag → stable channel (default).
+          echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            /tmp/appcast-work/
+
+      - name: Inject release notes into appcast item
+        if: inputs.publish-appcast
+        shell: bash
+        env:
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+        run: |
+          set -euo pipefail
+          NOTES=""
+          if [ -f /tmp/notes.md ]; then
+            NOTES=$(cat /tmp/notes.md)
+          fi
+
+          # Match by marketing version — stable items have unique versions.
+          VERSION="$VERSION" \
+          NOTES="$NOTES" \
+          APPCAST_PATH="/tmp/appcast-work/${APPCAST_FILENAME}" \
+          .shared-ci/.github/scripts/update-appcast.sh
+
+      - name: Upload appcast.xml to S3
+        if: inputs.publish-appcast
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "/tmp/appcast-work/${APPCAST_FILENAME}" \
+            "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" \
+            --content-type "application/xml"
+          echo "Uploaded ${APPCAST_FILENAME} → S3 (stable channel now live)"
+
+      # ── FINAL: GitHub Release ─────────────────────────────────────────────
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          NOTES_ARG=""
+          if [ -f /tmp/notes.md ]; then
+            NOTES_ARG="--notes-file /tmp/notes.md"
+          else
+            NOTES_ARG="--notes \"Release ${ARTIFACT_LABEL}\""
+          fi
+
+          gh release create "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            $NOTES_ARG
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-work /tmp/notes.md
+          rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8
