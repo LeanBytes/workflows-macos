@@ -1,0 +1,447 @@
+# ── Beta Distribution Orchestrator ───────────────────────────────────────────
+# Called from a per-app shell triggered on pull_request: closed (merged to main).
+# Builds Direct (always) and App Store (optional), then publishes in strict
+# fail-safe order:
+#
+#   1. App Store / TestFlight upload  (if enable-app-store)         ← GATE 1
+#   2. S3 upload of DMG/ZIP                                          (silent — no appcast yet)
+#   3. Beta appcast update + upload   (if publish-beta-appcast)      ← MAKES BETA VISIBLE
+#   4. GitHub pre-release creation
+#   5. PR comment with download links
+#
+# Per-app shell example:
+#
+#   on:
+#     pull_request:
+#       types: [closed]
+#       branches: [main]
+#   jobs:
+#     beta:
+#       if: github.event.pull_request.merged == true
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.1
+#       with:
+#         enable-app-store: true        # macpacker, filefillet
+#         publish-beta-appcast: true    # FlowMoose
+#       secrets: inherit
+# ─────────────────────────────────────────────────────────────────────────────
+name: distribute-beta
+
+on:
+  workflow_call:
+    inputs:
+      enable-app-store:
+        description: "Build for App Store and push to TestFlight"
+        type: boolean
+        default: false
+      publish-beta-appcast:
+        description: "Update Sparkle's beta appcast channel with this build"
+        type: boolean
+        default: false
+      use-tuist:
+        type: boolean
+        default: false
+      cache-whisper-model:
+        type: boolean
+        default: false
+      has-finder-extension:
+        type: boolean
+        default: false
+      has-quicklook-extension:
+        type: boolean
+        default: false
+      extra-xcodebuild-args:
+        type: string
+        default: ""
+      runs-on-build:
+        type: string
+        default: '"macos-26"'
+      runs-on-publish:
+        description: "Publish job needs macOS for altool + Sparkle generate_appcast"
+        type: string
+        default: '"macos-26"'
+      appcast-filename:
+        description: "Appcast XML filename on S3 (Sparkle uses one file with channel-tagged items)"
+        type: string
+        default: "appcast.xml"
+      appcast-seed-path:
+        description: "Path to seed appcast.xml in caller repo, used when S3 has no existing file"
+        type: string
+        default: "Config/appcast.xml"
+
+permissions:
+  contents: write          # to create GH pre-release
+  pull-requests: write     # to comment on merged PR
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      build-number: ${{ steps.compute.outputs.build-number }}
+      artifact-label: ${{ steps.compute.outputs.artifact-label }}
+      previous-tag: ${{ steps.previous.outputs.previous-tag }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.workflow_sha }}
+          path: .shared-ci
+
+      - name: Compute version + label
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          VERSION=$(.shared-ci/.github/scripts/version-derive.sh beta)
+          ARTIFACT_LABEL="v${VERSION}-beta-${BUILD_NUMBER}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
+
+          echo "Beta build prepared:"
+          echo "  Marketing version: ${VERSION}"
+          echo "  Build number:      ${BUILD_NUMBER}"
+          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+
+      - name: Find previous stable tag
+        id: previous
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Most recent v*.*.* tag, excluding beta-suffixed tags.
+          PREV=$(git describe --tags --match='v*.*.*' --exclude='*-beta-*' --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            echo "::warning::No previous stable tag found — release notes will be empty"
+          fi
+          echo "previous-tag=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Previous stable tag: ${PREV:-<none>}"
+
+  build-direct:
+    needs: prepare
+    uses: ./.github/workflows/_build-direct.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      use-tuist: ${{ inputs.use-tuist }}
+      cache-whisper-model: ${{ inputs.cache-whisper-model }}
+      has-finder-extension: ${{ inputs.has-finder-extension }}
+      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+    secrets: inherit
+
+  build-app-store:
+    if: inputs.enable-app-store
+    needs: prepare
+    uses: ./.github/workflows/_build-app-store.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      use-tuist: ${{ inputs.use-tuist }}
+      has-finder-extension: ${{ inputs.has-finder-extension }}
+      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+    secrets: inherit
+
+  publish-beta:
+    needs: [prepare, build-direct, build-app-store]
+    # Tolerate skipped build-app-store when enable-app-store is false.
+    if: |
+      always() &&
+      needs.build-direct.result == 'success' &&
+      (needs.build-app-store.result == 'success' || needs.build-app-store.result == 'skipped')
+    runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.workflow_sha }}
+          path: .shared-ci
+
+      - name: Download direct-build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: direct-build
+          path: ./artifacts/direct
+
+      - name: Download app-store-build artifact
+        if: inputs.enable-app-store
+        uses: actions/download-artifact@v4
+        with:
+          name: app-store-build
+          path: ./artifacts/app-store
+
+      # ── GATE 1: App Store / TestFlight upload ─────────────────────────────
+      - name: Install App Store Connect API key (for altool)
+        if: inputs.enable-app-store
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_BASE64" | base64 --decode \
+            > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Upload to TestFlight
+        if: inputs.enable-app-store
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          PKG=$(ls ./artifacts/app-store/*.pkg | head -1)
+          [ -f "$PKG" ] || { echo "::error::No .pkg in app-store artifact"; exit 1; }
+
+          xcrun altool --upload-app \
+            --type macos \
+            --file "$PKG" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+          echo "TestFlight upload accepted: $(basename "$PKG")"
+
+      # ── Fetch release notes (Markdown from GH auto-notes) ─────────────────
+      - name: Fetch GitHub auto-generated release notes
+        id: notes
+        if: env.PREVIOUS_TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE=/tmp/notes.md
+          PREVIOUS_TAG="$PREVIOUS_TAG" \
+          TARGET="${{ github.sha }}" \
+          .shared-ci/.github/scripts/release-notes-fetch.sh > "$NOTES_FILE"
+          echo "Notes written to $NOTES_FILE ($(wc -c < "$NOTES_FILE") bytes)"
+          echo "notes-file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Enrich release notes with Jira summaries
+        if: env.PREVIOUS_TAG != ''
+        shell: bash
+        env:
+          IN_PATH: /tmp/notes.md
+          OUT_PATH: /tmp/notes.md
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_KEY_PREFIX: ${{ vars.JIRA_KEY_PREFIX || 'LB' }}
+        run: |
+          set -euo pipefail
+          .shared-ci/.github/scripts/enrich-changelog-with-jira.sh
+
+      # ── S3 upload of DMG/ZIP (still silent — appcast hasn't moved yet) ────
+      - name: Install AWS CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v aws &>/dev/null; then
+            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o /tmp/AWSCLIV2.pkg
+            sudo installer -pkg /tmp/AWSCLIV2.pkg -target /
+            rm -f /tmp/AWSCLIV2.pkg
+          fi
+          aws --version
+
+      - name: Upload DMG + ZIP to S3
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+        run: |
+          set -euo pipefail
+          for f in ./artifacts/direct/*.dmg ./artifacts/direct/*.zip; do
+            [ -e "$f" ] || continue
+            BASENAME=$(basename "$f")
+            aws s3 cp "$f" "${S3_DISTRIBUTION_PATH}/${BASENAME}"
+            echo "Uploaded ${BASENAME}"
+          done
+
+      # ── GATE 2: Beta appcast update + upload (THIS makes Sparkle visible) ─
+      - name: Download Sparkle
+        if: inputs.publish-beta-appcast
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SPARKLE_TAG=$(gh api /repos/sparkle-project/Sparkle/releases/latest --jq '.tag_name')
+          echo "Sparkle version: ${SPARKLE_TAG}"
+          curl -fL -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_TAG}/Sparkle-${SPARKLE_TAG}.tar.xz"
+          mkdir -p /tmp/sparkle
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          chmod +x /tmp/sparkle/bin/generate_appcast
+
+      - name: Prepare appcast workdir
+        if: inputs.publish-beta-appcast
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+          APPCAST_SEED_PATH: ${{ inputs.appcast-seed-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/appcast-work
+          cp ./artifacts/direct/*.zip /tmp/appcast-work/
+
+          if aws s3 cp "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" "/tmp/appcast-work/${APPCAST_FILENAME}"; then
+            echo "Downloaded existing ${APPCAST_FILENAME} from S3"
+          else
+            echo "No ${APPCAST_FILENAME} on S3, using seed from caller repo: ${APPCAST_SEED_PATH}"
+            cp "${APPCAST_SEED_PATH}" "/tmp/appcast-work/${APPCAST_FILENAME}"
+          fi
+
+      - name: Run generate_appcast (beta channel)
+        if: inputs.publish-beta-appcast
+        shell: bash
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            --channel beta \
+            /tmp/appcast-work/
+
+      - name: Inject release notes into appcast item
+        if: inputs.publish-beta-appcast
+        shell: bash
+        env:
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+        run: |
+          set -euo pipefail
+          NOTES=""
+          if [ -f /tmp/notes.md ]; then
+            NOTES=$(cat /tmp/notes.md)
+          fi
+
+          # Match by build number — beta items repeat marketing version across PR merges.
+          VERSION="$BUILD_NUMBER" \
+          NOTES="$NOTES" \
+          APPCAST_PATH="/tmp/appcast-work/${APPCAST_FILENAME}" \
+          .shared-ci/.github/scripts/update-appcast.sh
+
+      - name: Upload appcast.xml to S3
+        if: inputs.publish-beta-appcast
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+        run: |
+          set -euo pipefail
+          aws s3 cp "/tmp/appcast-work/${APPCAST_FILENAME}" \
+            "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" \
+            --content-type "application/xml"
+          echo "Uploaded ${APPCAST_FILENAME} → S3 (beta channel now live)"
+
+      # ── Final step: GitHub pre-release ────────────────────────────────────
+      - name: Create GitHub pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          NOTES_ARG=""
+          if [ -f /tmp/notes.md ]; then
+            NOTES_ARG="--notes-file /tmp/notes.md"
+          else
+            NOTES_ARG="--notes \"Beta build ${ARTIFACT_LABEL}\""
+          fi
+
+          gh release create "${ARTIFACT_LABEL}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Beta ${ARTIFACT_LABEL}" \
+            --prerelease \
+            $NOTES_ARG
+
+      # ── PR comment ─────────────────────────────────────────────────────────
+      - name: Comment on merged PR
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
+          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+          ENABLE_APP_STORE: ${{ inputs.enable-app-store }}
+          PUBLISH_BETA_APPCAST: ${{ inputs.publish-beta-appcast }}
+        with:
+          script: |
+            const label = process.env.ARTIFACT_LABEL;
+            const baseUrl = process.env.S3_DOWNLOAD_URL;
+            const productName = process.env.PRODUCT_NAME;
+            const version = process.env.VERSION;
+            const build = process.env.BUILD_NUMBER;
+            const appStore = process.env.ENABLE_APP_STORE === 'true';
+            const betaAppcast = process.env.PUBLISH_BETA_APPCAST === 'true';
+
+            const channels = [];
+            if (betaAppcast) channels.push("Sparkle **beta** appcast");
+            if (appStore) channels.push("**TestFlight**");
+            const channelLine = channels.length
+              ? `Published to: ${channels.join(" + ")}.`
+              : `Build artifacts uploaded (no appcast / TestFlight).`;
+
+            const body = [
+              `**Beta build ready** ✅`,
+              ``,
+              channelLine,
+              ``,
+              `| Artifact | Link |`,
+              `|----------|------|`,
+              `| DMG | [${productName}_${label}.dmg](${baseUrl}/${productName}_${label}.dmg) |`,
+              `| ZIP | [${productName}_${label}.zip](${baseUrl}/${productName}_${label}.zip) |`,
+              ``,
+              `Version: \`${version}\` · Build: \`${build}\``,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-work /tmp/notes.md
+          rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8
