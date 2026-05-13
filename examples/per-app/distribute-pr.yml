@@ -1,0 +1,26 @@
+# ── Per-app PR distribution shell ────────────────────────────────────────────
+# Copy into each app repo at .github/workflows/distribute-pr.yml.
+# Only the inputs marked "per-app" need adjusting; the rest stay as-is.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Distribute PR
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr:
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.1
+    secrets: inherit
+    with:
+      # ── Per-app: uncomment only what applies ────────────────────────────
+      # use-tuist: true                # FlowMoose
+      # cache-whisper-model: true      # FlowMoose
+      # has-finder-extension: true     # macpacker
+      # has-quicklook-extension: true  # macpacker
+      # extra-xcodebuild-args: ""      # FlowMoose passes BUILD_RELEASE_DATE here
+      # runs-on-build: '["self-hosted","agent-alex"]'  # FlowMoose self-hosted

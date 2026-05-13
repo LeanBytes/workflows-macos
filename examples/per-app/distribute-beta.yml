@@ -1,0 +1,36 @@
+# ── Per-app beta distribution shell ──────────────────────────────────────────
+# Copy into each app repo at .github/workflows/distribute-beta.yml.
+# Triggered when a PR is merged to main. The `if:` gate prevents firing on
+# closed-but-unmerged PRs.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Distribute Beta
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write          # for the GH pre-release
+  pull-requests: write     # for the PR comment
+
+jobs:
+  beta:
+    if: github.event.pull_request.merged == true
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.1
+    secrets: inherit
+    with:
+      # ── Channel toggles ─────────────────────────────────────────────────
+      # enable-app-store: true         # macpacker, filefillet (TestFlight beta)
+      # publish-beta-appcast: true     # FlowMoose (Sparkle beta channel)
+
+      # ── Per-app build flags ─────────────────────────────────────────────
+      # use-tuist: true                # FlowMoose
+      # cache-whisper-model: true      # FlowMoose
+      # has-finder-extension: true     # macpacker
+      # has-quicklook-extension: true  # macpacker
+      # extra-xcodebuild-args: ""
+
+      # ── Runners ─────────────────────────────────────────────────────────
+      # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
+      # runs-on-publish: '["self-hosted","agent-alex"]' # FlowMoose

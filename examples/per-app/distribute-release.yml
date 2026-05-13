@@ -1,0 +1,33 @@
+# ── Per-app release distribution shell ───────────────────────────────────────
+# Copy into each app repo at .github/workflows/distribute-release.yml.
+# Triggered by pushing a v*.*.* tag. Strict fail-safe order: GH Release is
+# only created after every other publish step succeeds.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Distribute Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write    # for the GH Release
+
+jobs:
+  release:
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.1
+    secrets: inherit
+    with:
+      # ── Channel toggles ─────────────────────────────────────────────────
+      # enable-app-store: true         # macpacker, filefillet
+      # publish-appcast: false         # default true; set false only if no Sparkle
+
+      # ── Per-app build flags ─────────────────────────────────────────────
+      # use-tuist: true                # FlowMoose
+      # cache-whisper-model: true      # FlowMoose
+      # has-finder-extension: true     # macpacker
+      # has-quicklook-extension: true  # macpacker
+      # extra-xcodebuild-args: ""
+
+      # ── Runners ─────────────────────────────────────────────────────────
+      # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
+      # runs-on-publish: '["self-hosted","agent-alex"]' # FlowMoose
