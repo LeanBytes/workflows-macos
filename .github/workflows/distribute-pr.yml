@@ -1,0 +1,166 @@
+# ── PR Distribution Orchestrator ─────────────────────────────────────────────
+# Called from a per-app shell triggered on pull_request: opened/synchronize.
+# Builds a Direct artifact and posts a PR comment with download links.
+# Does NOT touch the appcast, App Store, or GitHub Releases.
+#
+# Per-app shell example:
+#
+#   on:
+#     pull_request:
+#       types: [opened, synchronize]
+#   jobs:
+#     pr:
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.1
+#       secrets: inherit
+#
+# Required caller secrets/vars: see _build-direct.yml header, plus:
+#   secrets.AWS_ACCESS_KEY_ID, secrets.AWS_SECRET_ACCESS_KEY
+#   vars.S3_DISTRIBUTION_PATH, vars.S3_DOWNLOAD_URL, vars.PRODUCT_NAME
+# ─────────────────────────────────────────────────────────────────────────────
+name: distribute-pr
+
+on:
+  workflow_call:
+    inputs:
+      use-tuist:
+        type: boolean
+        default: false
+      cache-whisper-model:
+        type: boolean
+        default: false
+      has-finder-extension:
+        type: boolean
+        default: false
+      has-quicklook-extension:
+        type: boolean
+        default: false
+      runs-on-build:
+        description: "JSON-encoded runner for the build callee"
+        type: string
+        default: '"macos-26"'
+      extra-xcodebuild-args:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      build-number: ${{ steps.compute.outputs.build-number }}
+      artifact-label: ${{ steps.compute.outputs.artifact-label }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # version-derive.sh needs full tag history
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v4
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.workflow_sha }}
+          path: .shared-ci
+
+      - name: Compute version + label
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          VERSION=$(.shared-ci/.github/scripts/version-derive.sh pr)
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          ARTIFACT_LABEL="v${VERSION}-beta-${BUILD_NUMBER}-pr${PR_NUMBER}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
+
+          echo "PR build prepared:"
+          echo "  Marketing version: ${VERSION}"
+          echo "  Build number:      ${BUILD_NUMBER}"
+          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+
+  build-direct:
+    needs: prepare
+    uses: ./.github/workflows/_build-direct.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      use-tuist: ${{ inputs.use-tuist }}
+      cache-whisper-model: ${{ inputs.cache-whisper-model }}
+      has-finder-extension: ${{ inputs.has-finder-extension }}
+      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+    secrets: inherit
+
+  publish-pr:
+    needs: [prepare, build-direct]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download direct-build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: direct-build
+          path: ./artifacts
+
+      - name: Upload to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in ./artifacts/*.dmg ./artifacts/*.zip; do
+            [ -e "$f" ] || continue
+            BASENAME=$(basename "$f")
+            aws s3 cp "$f" "${S3_DISTRIBUTION_PATH}/${BASENAME}"
+            echo "Uploaded ${BASENAME}"
+          done
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
+          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+        with:
+          script: |
+            const label = process.env.ARTIFACT_LABEL;
+            const baseUrl = process.env.S3_DOWNLOAD_URL;
+            const productName = process.env.PRODUCT_NAME;
+            const version = process.env.VERSION;
+            const build = process.env.BUILD_NUMBER;
+            const pr = process.env.PR_NUMBER;
+
+            const body = [
+              `**PR build ready** ✅`,
+              ``,
+              `| Artifact | Link |`,
+              `|----------|------|`,
+              `| DMG | [${productName}_${label}.dmg](${baseUrl}/${productName}_${label}.dmg) |`,
+              `| ZIP | [${productName}_${label}.zip](${baseUrl}/${productName}_${label}.zip) |`,
+              ``,
+              `PR: #${pr} · Version: \`${version}\` · Build: \`${build}\``,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
