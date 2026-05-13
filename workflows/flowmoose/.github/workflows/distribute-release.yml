@@ -1,0 +1,238 @@
+# ── Release Distribution ─────────────────────────────────────────────────────
+# Triggered when a version tag (v*.*.*) is pushed.
+# Builds the official release and uploads to S3.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Distribute Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Determine version info and call the reusable build workflow ────────────
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build-number: ${{ steps.version.outputs.build-number }}
+      artifact-label: ${{ steps.version.outputs.artifact-label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version info
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Timestamp-based build number in UTC (always increasing)
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+
+          # Marketing version from the pushed tag (LB-402: tag is the
+          # source of truth, no more xcconfig bump commits).
+          VERSION=$(.github/scripts/version-derive.sh release "${GITHUB_REF_NAME}")
+
+          ARTIFACT_LABEL="v${VERSION}"
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "build-number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+          echo "artifact-label=${ARTIFACT_LABEL}" >> $GITHUB_OUTPUT
+
+          echo "Release build"
+          echo "  Marketing version: ${VERSION} (from tag ${GITHUB_REF_NAME})"
+          echo "  Build number:      ${BUILD_NUMBER}"
+          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/distribute-build.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+    secrets: inherit
+
+  # ── Update Sparkle appcast.xml ──────────────────────────────────────────────
+  update-appcast:
+    needs: [prepare, build]
+    runs-on: [macos-26]
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to a shallow clone (depth 1) and
+          # does not fetch tags. generate-changelog.sh runs `git describe
+          # --tags` to find the prior stable tag and walks the commit
+          # range from there to HEAD, so it needs the full history.
+          fetch-depth: 0
+
+      - name: Install AWS CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v aws &>/dev/null; then
+            echo "AWS CLI not found — installing"
+            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o /tmp/AWSCLIV2.pkg
+            sudo installer -pkg /tmp/AWSCLIV2.pkg -target /
+            rm -f /tmp/AWSCLIV2.pkg
+          fi
+          aws --version
+
+      - name: Download Sparkle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          SPARKLE_TAG="$(
+            curl -fsSL \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "User-Agent: github-actions" \
+              https://api.github.com/repos/sparkle-project/Sparkle/releases/latest \
+            | python3 -c 'import sys, json; print(json.load(sys.stdin)["tag_name"])'
+          )"
+
+          echo "Sparkle version: ${SPARKLE_TAG}"
+
+          curl -fL \
+            -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_TAG}/Sparkle-${SPARKLE_TAG}.tar.xz"
+
+          mkdir -p /tmp/sparkle
+          tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          chmod +x /tmp/sparkle/bin/generate_appcast
+
+      - name: Prepare release directory
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/appcast-work
+
+          # Download the ZIP that was just uploaded by the build job
+          ZIP_NAME="${{ vars.PRODUCT_NAME }}_${ARTIFACT_LABEL}.zip"
+          aws s3 cp "${S3_DISTRIBUTION_PATH}/${ZIP_NAME}" "/tmp/appcast-work/${ZIP_NAME}"
+
+          # Download existing appcast.xml from S3 (fall back to repo seed)
+          if aws s3 cp "${S3_DISTRIBUTION_PATH}/appcast.xml" /tmp/appcast-work/appcast.xml; then
+            echo "Downloaded existing appcast.xml from S3"
+          else
+            echo "No appcast.xml on S3, using seed from repo"
+            cp Config/appcast.xml /tmp/appcast-work/appcast.xml
+          fi
+
+          # Download existing CHANGELOG.json from S3 (fall back to repo seed)
+          if aws s3 cp "${S3_DISTRIBUTION_PATH}/CHANGELOG.json" /tmp/appcast-work/CHANGELOG-existing.json; then
+            echo "Downloaded existing CHANGELOG.json from S3"
+          else
+            echo "No CHANGELOG.json on S3, using seed from repo"
+            cp Config/CHANGELOG.json /tmp/appcast-work/CHANGELOG-existing.json
+          fi
+
+      - name: Generate CHANGELOG.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/generate-changelog.sh
+
+          IN_PATH=/tmp/appcast-work/CHANGELOG-existing.json \
+          OUT_PATH=/tmp/appcast-work/CHANGELOG.json \
+          VERSION="${VERSION}" \
+          BUILD_NUMBER="${BUILD_NUMBER}" \
+          CHANNEL="stable" \
+          PRODUCT_NAME="${{ vars.PRODUCT_NAME }}" \
+          .github/scripts/generate-changelog.sh
+
+      - name: Enrich CHANGELOG.json with Jira titles
+        shell: bash
+        env:
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/enrich-changelog-with-jira.sh
+
+          IN_PATH=/tmp/appcast-work/CHANGELOG.json \
+          OUT_PATH=/tmp/appcast-work/CHANGELOG.json \
+          .github/scripts/enrich-changelog-with-jira.sh
+
+      - name: Run generate_appcast
+        shell: bash
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            /tmp/appcast-work/
+          echo "generate_appcast completed"
+
+      - name: Inject changelog and trim appcast
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/update-appcast.sh
+
+          # Format the latest version's entries from CHANGELOG.json into
+          # a Markdown bullet list. Customer-facing format: just the
+          # (Jira-enriched) title — no PR or Jira link. The metadata
+          # stays in CHANGELOG.json for tooling.
+          NOTES=$(jq -r '
+            if (.versions | length) == 0 then ""
+            else
+              .versions[0].entries
+              | map("- " + .title)
+              | join("\n")
+            end
+          ' /tmp/appcast-work/CHANGELOG.json)
+
+          NOTES="$NOTES" \
+          VERSION="${VERSION}" \
+          APPCAST_PATH=/tmp/appcast-work/appcast.xml \
+          .github/scripts/update-appcast.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-and-appcast
+          path: |
+            /tmp/appcast-work/appcast.xml
+            /tmp/appcast-work/CHANGELOG.json
+
+      - name: Upload appcast.xml and CHANGELOG.json to S3
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: "eu-central-1"
+          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+        run: |
+          set -euo pipefail
+          aws s3 cp /tmp/appcast-work/appcast.xml "${S3_DISTRIBUTION_PATH}/appcast.xml" \
+            --content-type "application/xml"
+          aws s3 cp /tmp/appcast-work/CHANGELOG.json "${S3_DISTRIBUTION_PATH}/CHANGELOG.json" \
+            --content-type "application/json"
+          echo "Uploaded appcast.xml and CHANGELOG.json to ${S3_DISTRIBUTION_PATH}/"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-work
