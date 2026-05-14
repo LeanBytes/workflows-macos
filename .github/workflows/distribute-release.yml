@@ -92,7 +92,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: LeanBytes/workflows-macos
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ github.job_workflow_sha }}
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
@@ -184,7 +184,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: LeanBytes/workflows-macos
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ github.job_workflow_sha }}
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
