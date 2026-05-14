@@ -72,6 +72,7 @@ jobs:
           repository: LeanBytes/workflows-macos
           ref: ${{ github.workflow_sha }}
           path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
       - name: Compute version + label
         id: compute

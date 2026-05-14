@@ -58,6 +58,7 @@ Set in your app's repo (or inherit from org):
 | `PROV_PROF_DEVID_FINDER_BASE64`, `PROV_PROF_STORE_FINDER_BASE64` | Finder extension profiles | macpacker |
 | `PROV_PROF_DEVID_QL_BASE64`, `PROV_PROF_STORE_QL_BASE64` | Quick Look extension profiles | macpacker |
 | `JIRA_USER_EMAIL`, `JIRA_API_TOKEN` | Jira changelog enrichment (optional) | Apps that want it |
+| `SHARED_WORKFLOWS_TOKEN` | PAT (or GH App token) with read access to `LeanBytes/workflows-macos`. The default `GITHUB_TOKEN` is scoped to the *caller* repo and can't clone this private workflow repo's scripts. See "Access for private consumers" below. | All (when this repo is private) |
 
 ### 2. Vars
 
@@ -172,4 +173,22 @@ workflows/                     ← reference snapshots from filefillet/flowmoose
 
 ## Access for private consumers
 
-This repo is private. For private consumer repos to call its workflows, ensure under `Settings → Actions → General → Access` the access policy includes the consuming repos (or the whole `LeanBytes` org).
+Two distinct permissions are needed for private consumer repos:
+
+**1. Permission to *call* the workflows.** Set under this repo's `Settings → Actions → General → Access`. Allow the consuming repos (or the whole `LeanBytes` org).
+
+**2. Permission to *clone* this repo's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only — it can't read this private repo's source, which the orchestrators need (the `actions/checkout` of `.github/scripts/`). Provide a token via the `SHARED_WORKFLOWS_TOKEN` secret on each consumer.
+
+Quickest path — fine-grained PAT:
+
+1. github.com → `Settings` → `Developer settings` → `Personal access tokens` → `Fine-grained tokens` → `Generate new token`
+2. **Resource owner**: `LeanBytes`
+3. **Repository access**: `Only select repositories` → `LeanBytes/workflows-macos`
+4. **Permissions** → `Repository permissions` → `Contents`: **Read-only**
+5. Generate, copy
+6. `LeanBytes` org → `Settings` → `Secrets and variables` → `Actions` → `New organization secret`
+7. Name: `SHARED_WORKFLOWS_TOKEN`, value: the PAT, repository access: select the consumer repos (FlowMoose, filefillet, macpacker)
+
+The orchestrators reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` — falls back to the default token if the secret isn't set, which works if you ever make this repo public.
+
+For longer-term hygiene (no expiring PATs tied to a single user), prefer a GitHub App: create one at the org level with read-only `Contents` on this repo, install on the consumer repos, mint tokens via `actions/create-github-app-token` and pass to the checkout step. Same shape, no rotation overhead.
