@@ -1,11 +1,16 @@
 # ── Beta Distribution Orchestrator ───────────────────────────────────────────
 # Called from a per-app shell triggered on pull_request: closed (merged to main).
-# Builds Direct (always) and App Store (optional), then publishes in strict
-# fail-safe order:
+# Five independent toggles control what builds and what gets distributed:
 #
-#   1. App Store / TestFlight upload  (if enable-app-store)         ← GATE 1
-#   2. S3 upload of DMG/ZIP                                          (silent — no appcast yet)
-#   3. Beta appcast update + upload   (if publish-beta-appcast)      ← MAKES BETA VISIBLE
+#   build-direct              build the .app/DMG/ZIP   (default true)
+#   build-app-store           build the .pkg            (default false)
+#   distribute-app-store      altool → ASC / TestFlight (default false; needs build-app-store)
+#   distribute-beta-appcast   Sparkle beta channel      (default false; needs build-direct)
+#
+# Strict fail-safe publish order (in publish-beta job):
+#   1. altool → ASC                  (if distribute-app-store)        ← GATE 1
+#   2. S3 upload of DMG/ZIP          (if build-direct; silent)
+#   3. Beta appcast update + upload  (if distribute-beta-appcast)     ← MAKES BETA VISIBLE
 #   4. GitHub pre-release creation
 #   5. PR comment with download links
 #
@@ -18,10 +23,11 @@
 #   jobs:
 #     beta:
 #       if: github.event.pull_request.merged == true
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.2
 #       with:
-#         enable-app-store: true        # macpacker, filefillet
-#         publish-beta-appcast: true    # FlowMoose
+#         build-app-store: true         # macpacker, filefillet
+#         distribute-app-store: true    # macpacker, filefillet
+#         distribute-beta-appcast: true # FlowMoose
 #       secrets: inherit
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-beta
@@ -29,12 +35,20 @@ name: distribute-beta
 on:
   workflow_call:
     inputs:
-      enable-app-store:
-        description: "Build for App Store and push to TestFlight"
+      build-direct:
+        description: "Build the Direct (.app/DMG/ZIP) artifact"
+        type: boolean
+        default: true
+      build-app-store:
+        description: "Build the App Store (.pkg) artifact"
         type: boolean
         default: false
-      publish-beta-appcast:
-        description: "Update Sparkle's beta appcast channel with this build"
+      distribute-app-store:
+        description: "Upload .pkg to App Store Connect via altool (TestFlight beta tracks). Requires build-app-store."
+        type: boolean
+        default: false
+      distribute-beta-appcast:
+        description: "Update Sparkle's beta appcast channel with the Direct build. Requires build-direct."
         type: boolean
         default: false
       use-tuist:
@@ -134,6 +148,7 @@ jobs:
           echo "Previous stable tag: ${PREV:-<none>}"
 
   build-direct:
+    if: inputs.build-direct
     needs: prepare
     uses: ./.github/workflows/_build-direct.yml
     with:
@@ -151,7 +166,7 @@ jobs:
     secrets: inherit
 
   build-app-store:
-    if: inputs.enable-app-store
+    if: inputs.build-app-store
     needs: prepare
     uses: ./.github/workflows/_build-app-store.yml
     with:
@@ -167,11 +182,12 @@ jobs:
 
   publish-beta:
     needs: [prepare, build-direct, build-app-store]
-    # Tolerate skipped build-app-store when enable-app-store is false.
+    # Tolerate skipped builds; require at least one to have succeeded.
     if: |
       always() &&
-      needs.build-direct.result == 'success' &&
-      (needs.build-app-store.result == 'success' || needs.build-app-store.result == 'skipped')
+      needs.build-direct.result != 'failure' &&
+      needs.build-app-store.result != 'failure' &&
+      (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
     runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 30
     env:
@@ -194,13 +210,14 @@ jobs:
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
       - name: Download direct-build artifact
+        if: inputs.build-direct
         uses: actions/download-artifact@v4
         with:
           name: direct-build
           path: ./artifacts/direct
 
       - name: Download app-store-build artifact
-        if: inputs.enable-app-store
+        if: inputs.build-app-store
         uses: actions/download-artifact@v4
         with:
           name: app-store-build
@@ -208,7 +225,7 @@ jobs:
 
       # ── GATE 1: App Store / TestFlight upload ─────────────────────────────
       - name: Install App Store Connect API key (for altool)
-        if: inputs.enable-app-store
+        if: inputs.build-app-store && inputs.distribute-app-store
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -220,7 +237,7 @@ jobs:
             > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
       - name: Upload to TestFlight
-        if: inputs.enable-app-store
+        if: inputs.build-app-store && inputs.distribute-app-store
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -270,6 +287,7 @@ jobs:
 
       # ── S3 upload of DMG/ZIP (still silent — appcast hasn't moved yet) ────
       - name: Install AWS CLI
+        if: inputs.build-direct
         shell: bash
         run: |
           set -euo pipefail
@@ -281,6 +299,7 @@ jobs:
           aws --version
 
       - name: Upload DMG + ZIP to S3
+        if: inputs.build-direct
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -298,7 +317,7 @@ jobs:
 
       # ── GATE 2: Beta appcast update + upload (THIS makes Sparkle visible) ─
       - name: Download Sparkle
-        if: inputs.publish-beta-appcast
+        if: inputs.build-direct && inputs.distribute-beta-appcast
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -313,7 +332,7 @@ jobs:
           chmod +x /tmp/sparkle/bin/generate_appcast
 
       - name: Prepare appcast workdir
-        if: inputs.publish-beta-appcast
+        if: inputs.build-direct && inputs.distribute-beta-appcast
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -335,7 +354,7 @@ jobs:
           fi
 
       - name: Run generate_appcast (beta channel)
-        if: inputs.publish-beta-appcast
+        if: inputs.build-direct && inputs.distribute-beta-appcast
         shell: bash
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
@@ -347,7 +366,7 @@ jobs:
             /tmp/appcast-work/
 
       - name: Inject release notes into appcast item
-        if: inputs.publish-beta-appcast
+        if: inputs.build-direct && inputs.distribute-beta-appcast
         shell: bash
         env:
           APPCAST_FILENAME: ${{ inputs.appcast-filename }}
@@ -365,7 +384,7 @@ jobs:
           .shared-ci/.github/scripts/update-appcast.sh
 
       - name: Upload appcast.xml to S3
-        if: inputs.publish-beta-appcast
+        if: inputs.build-direct && inputs.distribute-beta-appcast
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -410,8 +429,8 @@ jobs:
           PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
           VERSION: ${{ needs.prepare.outputs.version }}
           BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
-          ENABLE_APP_STORE: ${{ inputs.enable-app-store }}
-          PUBLISH_BETA_APPCAST: ${{ inputs.publish-beta-appcast }}
+          DISTRIBUTE_APP_STORE: ${{ inputs.build-app-store && inputs.distribute-app-store }}
+          DISTRIBUTE_BETA_APPCAST: ${{ inputs.build-direct && inputs.distribute-beta-appcast }}
         with:
           script: |
             const label = process.env.ARTIFACT_LABEL;
@@ -419,8 +438,8 @@ jobs:
             const productName = process.env.PRODUCT_NAME;
             const version = process.env.VERSION;
             const build = process.env.BUILD_NUMBER;
-            const appStore = process.env.ENABLE_APP_STORE === 'true';
-            const betaAppcast = process.env.PUBLISH_BETA_APPCAST === 'true';
+            const appStore = process.env.DISTRIBUTE_APP_STORE === 'true';
+            const betaAppcast = process.env.DISTRIBUTE_BETA_APPCAST === 'true';
 
             const channels = [];
             if (betaAppcast) channels.push("Sparkle **beta** appcast");

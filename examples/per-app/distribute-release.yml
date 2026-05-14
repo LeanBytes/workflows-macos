@@ -14,12 +14,16 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.1
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.2
     secrets: inherit
     with:
-      # ── Channel toggles ─────────────────────────────────────────────────
-      # enable-app-store: true         # macpacker, filefillet
-      # publish-appcast: false         # default true; set false only if no Sparkle
+      # ── Build toggles (default: build-direct=true, build-app-store=false) ─
+      # build-direct: false             # only set if you want to skip Direct
+      # build-app-store: true           # macpacker, filefillet
+
+      # ── Distribute toggles (default: distribute-stable-appcast=true) ────
+      # distribute-app-store: true      # macpacker, filefillet (altool → ASC)
+      # distribute-stable-appcast: false # set false only if no Sparkle
 
       # ── Per-app build flags ─────────────────────────────────────────────
       # use-tuist: true                # FlowMoose

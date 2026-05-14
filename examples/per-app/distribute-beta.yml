@@ -17,12 +17,16 @@ permissions:
 jobs:
   beta:
     if: github.event.pull_request.merged == true
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.1
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.2
     secrets: inherit
     with:
-      # ── Channel toggles ─────────────────────────────────────────────────
-      # enable-app-store: true         # macpacker, filefillet (TestFlight beta)
-      # publish-beta-appcast: true     # FlowMoose (Sparkle beta channel)
+      # ── Build toggles (default: build-direct=true, build-app-store=false) ─
+      # build-direct: false             # only set if you want to skip Direct
+      # build-app-store: true           # macpacker, filefillet
+
+      # ── Distribute toggles (default: all false) ─────────────────────────
+      # distribute-app-store: true      # macpacker, filefillet (altool → TestFlight)
+      # distribute-beta-appcast: true   # FlowMoose (Sparkle beta channel)
 
       # ── Per-app build flags ─────────────────────────────────────────────
       # use-tuist: true                # FlowMoose

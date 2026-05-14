@@ -100,13 +100,25 @@ Copy from `examples/per-app/`:
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Uncomment per-app inputs (use-tuist, enable-app-store, has-finder-extension, etc.) as needed. Reference table:
+Uncomment per-app inputs as needed. The beta and release orchestrators expose four independent toggles for build/distribute control:
 
-| App | use-tuist | enable-app-store | publish-beta-appcast | has-finder-extension | has-quicklook-extension |
+| Input | Default | Effect |
+|---|---|---|
+| `build-direct` | `true` | Build the .app/DMG/ZIP via `_build-direct.yml` |
+| `build-app-store` | `false` | Build the .pkg via `_build-app-store.yml` |
+| `distribute-app-store` | `false` | altool upload to ASC. Requires `build-app-store`. |
+| `distribute-beta-appcast` (beta) | `false` | Publish to Sparkle beta channel. Requires `build-direct`. |
+| `distribute-stable-appcast` (release) | `true` | Publish to Sparkle stable channel. Requires `build-direct`. |
+
+Per-app config (typical):
+
+| App | build-direct | build-app-store | distribute-app-store | distribute-beta-appcast (beta) | distribute-stable-appcast (release) |
 |---|---|---|---|---|---|
-| FlowMoose | ✓ | — | ✓ | — | — |
-| filefillet | — | ✓ | — | — | — |
-| macpacker | — | ✓ | — | ✓ | ✓ |
+| FlowMoose | ✓ | — | — | ✓ | ✓ (default) |
+| filefillet | ✓ | ✓ | ✓ | — | ✓ (default) |
+| macpacker | ✓ | ✓ | ✓ | — | ✓ (default) |
+
+Plus per-app build flags: `use-tuist`, `has-finder-extension`, `has-quicklook-extension`, `extra-xcodebuild-args`. macpacker sets both `has-*-extension` flags; FlowMoose sets `use-tuist`.
 
 ### 5. Pre-build hooks (app-specific assets)
 

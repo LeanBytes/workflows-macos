@@ -1,14 +1,21 @@
 # ── Release Distribution Orchestrator ────────────────────────────────────────
 # Called from a per-app shell triggered on tag push (push: tags: ['v*.*.*']).
-# Builds Direct (always) and App Store (optional), then publishes in strict
-# fail-safe order. Crucially: GH Release object is created LAST, so a failed
-# build never leaves a dangling release.
+# Crucially: GH Release object is created LAST, so a failed build never leaves
+# a dangling release on the tag.
 #
-#   1. Fetch GH auto-notes (no Release object yet)
-#   2. App Store / TestFlight upload  (if enable-app-store)         ← GATE 1
-#   3. S3 upload of DMG/ZIP                                          (silent)
-#   4. Stable appcast update + upload (if publish-appcast)           ← MAKES STABLE VISIBLE
-#   5. GitHub Release creation                                       ← LAST
+# Five independent toggles control what builds and what gets distributed:
+#
+#   build-direct                build the .app/DMG/ZIP   (default true)
+#   build-app-store             build the .pkg            (default false)
+#   distribute-app-store        altool → ASC              (default false; needs build-app-store)
+#   distribute-stable-appcast   Sparkle stable channel    (default true; needs build-direct)
+#
+# Strict fail-safe publish order:
+#   1. Fetch GH auto-notes           (no Release object created yet)
+#   2. altool → ASC                  (if distribute-app-store)         ← GATE 1
+#   3. S3 upload of DMG/ZIP          (if build-direct; silent)
+#   4. Stable appcast update + upload (if distribute-stable-appcast)   ← MAKES STABLE VISIBLE
+#   5. GitHub Release creation                                          ← LAST
 #
 # Per-app shell example:
 #
@@ -17,9 +24,10 @@
 #       tags: ['v*.*.*']
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.2
 #       with:
-#         enable-app-store: true        # macpacker, filefillet
+#         build-app-store: true         # macpacker, filefillet
+#         distribute-app-store: true    # macpacker, filefillet
 #       secrets: inherit
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-release
@@ -27,12 +35,20 @@ name: distribute-release
 on:
   workflow_call:
     inputs:
-      enable-app-store:
-        description: "Build for App Store and push via altool"
+      build-direct:
+        description: "Build the Direct (.app/DMG/ZIP) artifact"
+        type: boolean
+        default: true
+      build-app-store:
+        description: "Build the App Store (.pkg) artifact"
         type: boolean
         default: false
-      publish-appcast:
-        description: "Update Sparkle's stable appcast with this release"
+      distribute-app-store:
+        description: "Upload .pkg to App Store Connect via altool. Requires build-app-store."
+        type: boolean
+        default: false
+      distribute-stable-appcast:
+        description: "Update Sparkle's stable appcast with the Direct build. Requires build-direct."
         type: boolean
         default: true
       use-tuist:
@@ -130,6 +146,7 @@ jobs:
           echo "Previous stable tag: ${PREV:-<none>}"
 
   build-direct:
+    if: inputs.build-direct
     needs: prepare
     uses: ./.github/workflows/_build-direct.yml
     with:
@@ -147,7 +164,7 @@ jobs:
     secrets: inherit
 
   build-app-store:
-    if: inputs.enable-app-store
+    if: inputs.build-app-store
     needs: prepare
     uses: ./.github/workflows/_build-app-store.yml
     with:
@@ -163,10 +180,12 @@ jobs:
 
   publish-release:
     needs: [prepare, build-direct, build-app-store]
+    # Tolerate skipped builds; require at least one to have succeeded.
     if: |
       always() &&
-      needs.build-direct.result == 'success' &&
-      (needs.build-app-store.result == 'success' || needs.build-app-store.result == 'skipped')
+      needs.build-direct.result != 'failure' &&
+      needs.build-app-store.result != 'failure' &&
+      (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
     runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 30
     env:
@@ -189,13 +208,14 @@ jobs:
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
       - name: Download direct-build artifact
+        if: inputs.build-direct
         uses: actions/download-artifact@v4
         with:
           name: direct-build
           path: ./artifacts/direct
 
       - name: Download app-store-build artifact
-        if: inputs.enable-app-store
+        if: inputs.build-app-store
         uses: actions/download-artifact@v4
         with:
           name: app-store-build
@@ -232,7 +252,7 @@ jobs:
 
       # ── GATE 1: App Store upload ──────────────────────────────────────────
       - name: Install App Store Connect API key (for altool)
-        if: inputs.enable-app-store
+        if: inputs.build-app-store && inputs.distribute-app-store
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -244,7 +264,7 @@ jobs:
             > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
       - name: Upload to App Store Connect
-        if: inputs.enable-app-store
+        if: inputs.build-app-store && inputs.distribute-app-store
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -264,6 +284,7 @@ jobs:
 
       # ── S3 upload of DMG/ZIP (still silent — appcast hasn't moved) ────────
       - name: Install AWS CLI
+        if: inputs.build-direct
         shell: bash
         run: |
           set -euo pipefail
@@ -275,6 +296,7 @@ jobs:
           aws --version
 
       - name: Upload DMG + ZIP to S3
+        if: inputs.build-direct
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -292,7 +314,7 @@ jobs:
 
       # ── GATE 2: Stable appcast update + upload ────────────────────────────
       - name: Download Sparkle
-        if: inputs.publish-appcast
+        if: inputs.build-direct && inputs.distribute-stable-appcast
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -307,7 +329,7 @@ jobs:
           chmod +x /tmp/sparkle/bin/generate_appcast
 
       - name: Prepare appcast workdir
-        if: inputs.publish-appcast
+        if: inputs.build-direct && inputs.distribute-stable-appcast
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -329,7 +351,7 @@ jobs:
           fi
 
       - name: Run generate_appcast (stable channel)
-        if: inputs.publish-appcast
+        if: inputs.build-direct && inputs.distribute-stable-appcast
         shell: bash
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
@@ -341,7 +363,7 @@ jobs:
             /tmp/appcast-work/
 
       - name: Inject release notes into appcast item
-        if: inputs.publish-appcast
+        if: inputs.build-direct && inputs.distribute-stable-appcast
         shell: bash
         env:
           APPCAST_FILENAME: ${{ inputs.appcast-filename }}
@@ -359,7 +381,7 @@ jobs:
           .shared-ci/.github/scripts/update-appcast.sh
 
       - name: Upload appcast.xml to S3
-        if: inputs.publish-appcast
+        if: inputs.build-direct && inputs.distribute-stable-appcast
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
