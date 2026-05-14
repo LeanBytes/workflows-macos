@@ -11,8 +11,8 @@
 # call distribute-beta.yml / distribute-release.yml, not this file directly.
 #
 # Required caller secrets:
-#   CERTIFICATE_P12_BASE64  — Apple Distribution cert (App Store)
-#   CERTIFICATE_PASSWORD    — password for the p12 (shared with DEVELOPER_ID_P12_BASE64)
+#   APPLE_DISTR_P12_BASE64  — Apple Distribution cert + private key (App Store)
+#   APPLE_DISTR_PASSWORD    — password for the Apple Distribution p12
 #   KEYCHAIN_PASSWORD       — ephemeral build keychain password
 #   PROV_PROF_STORE_BASE64  — main App Store provisioning profile
 #
@@ -120,23 +120,23 @@ jobs:
       - name: Verify .p12 envelope (diagnostic)
         shell: bash
         env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          APPLE_DISTR_P12_BASE64: ${{ secrets.APPLE_DISTR_P12_BASE64 }}
+          APPLE_DISTR_PASSWORD: ${{ secrets.APPLE_DISTR_PASSWORD }}
         run: |
           set -euo pipefail
-          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > /tmp/certificate-check.p12
+          echo "$APPLE_DISTR_P12_BASE64" | base64 --decode > /tmp/certificate-check.p12
 
           SIZE=$(wc -c < /tmp/certificate-check.p12)
           echo "Decoded .p12 size: $SIZE bytes"
           if [ "$SIZE" -lt 1000 ]; then
-            echo "::error::.p12 is suspiciously small ($SIZE bytes) — likely a base64 encoding issue with CERTIFICATE_P12_BASE64"
+            echo "::error::.p12 is suspiciously small ($SIZE bytes) — likely a base64 encoding issue with APPLE_DISTR_P12_BASE64"
             exit 1
           fi
 
           if ! openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys \
-                -passin "pass:$CERTIFICATE_PASSWORD" > /tmp/p12-info.txt 2>&1; then
+                -passin "pass:$APPLE_DISTR_PASSWORD" > /tmp/p12-info.txt 2>&1; then
             echo "::error::openssl pkcs12 rejected the file. Common causes:"
-            echo "  - CERTIFICATE_PASSWORD doesn't match THIS .p12 (may differ from the Developer ID p12)"
+            echo "  - APPLE_DISTR_PASSWORD doesn't match the APPLE_DISTR_P12_BASE64 .p12"
             echo "  - .p12 was corrupted during base64 encoding"
             echo "── openssl output ──────────────────────────────────────────"
             cat /tmp/p12-info.txt
@@ -153,18 +153,18 @@ jobs:
       - name: Set up keychain
         shell: bash
         env:
-          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
-          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          APPLE_DISTR_P12_BASE64: ${{ secrets.APPLE_DISTR_P12_BASE64 }}
+          APPLE_DISTR_PASSWORD: ${{ secrets.APPLE_DISTR_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
 
-          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > /tmp/certificate.p12
+          echo "$APPLE_DISTR_P12_BASE64" | base64 --decode > /tmp/certificate.p12
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security import /tmp/certificate.p12 \
             -k build.keychain \
-            -P "$CERTIFICATE_PASSWORD" \
+            -P "$APPLE_DISTR_PASSWORD" \
             -T /usr/bin/codesign \
             -T /usr/bin/productbuild
           security set-key-partition-list \

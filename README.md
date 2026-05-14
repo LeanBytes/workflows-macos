@@ -46,9 +46,10 @@ Set in your app's repo (or inherit from org):
 
 | Secret | Purpose | Required for |
 |---|---|---|
-| `DEVELOPER_ID_P12_BASE64` | Developer ID p12 (base64) | Direct |
-| `CERTIFICATE_P12_BASE64` | Apple Distribution p12 (base64) | App Store |
-| `CERTIFICATE_PASSWORD` | Password for both p12s above (shared) | Both |
+| `DEVELOPER_ID_P12_BASE64` | Developer ID Application cert + private key (base64) | Direct |
+| `DEVELOPER_ID_PASSWORD` | Password for the Developer ID p12 | Direct |
+| `APPLE_DISTR_P12_BASE64` | Apple Distribution cert + private key (base64) | App Store |
+| `APPLE_DISTR_PASSWORD` | Password for the Apple Distribution p12 | App Store |
 | `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | Both |
 | `PROV_PROF_DEVID_BASE64` | Main Developer ID provisioning profile | Direct |
 | `PROV_PROF_STORE_BASE64` | Main App Store provisioning profile | App Store |

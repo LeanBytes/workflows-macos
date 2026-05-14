@@ -9,8 +9,11 @@
 # not this file directly.
 #
 # Required caller secrets:
-#   DEVELOPER_ID_P12_BASE64, CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD,
-#   PROV_PROF_DEVID_BASE64, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64
+#   DEVELOPER_ID_P12_BASE64  — Developer ID Application cert + private key
+#   DEVELOPER_ID_PASSWORD    — password for the Developer ID p12
+#   KEYCHAIN_PASSWORD        — ephemeral build keychain password
+#   PROV_PROF_DEVID_BASE64   — main Developer ID provisioning profile
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64  — ASC API key for notarization
 #
 # Required caller vars:
 #   SCHEME_NAME, BUNDLE_ID, PRODUCT_NAME
@@ -142,7 +145,7 @@ jobs:
         shell: bash
         env:
           DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-          DEVELOPER_ID_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
