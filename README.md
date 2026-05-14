@@ -46,15 +46,15 @@ Set in your app's repo (or inherit from org):
 
 | Secret | Purpose | Required for |
 |---|---|---|
-| `DEVELOPER_ID_P12_BASE64` | Developer ID p12 (base64) | Direct (always) |
-| `CERTIFICATE_PASSWORD` | Password for above p12 | Direct |
+| `DEVELOPER_ID_P12_BASE64` | Developer ID p12 (base64) | Direct |
+| `CERTIFICATE_P12_BASE64` | Apple Distribution p12 (base64) | App Store |
+| `CERTIFICATE_PASSWORD` | Password for both p12s above (shared) | Both |
 | `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | Both |
 | `PROV_PROF_DEVID_BASE64` | Main Developer ID provisioning profile | Direct |
+| `PROV_PROF_STORE_BASE64` | Main App Store provisioning profile | App Store |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key | Both (notarization + altool) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3 upload credentials | Direct |
 | `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key | Direct (appcast signing) |
-| `APP_STORE_P12_BASE64`, `APP_STORE_CERT_PASSWORD` | Apple Distribution cert | App Store |
-| `PROV_PROF_STORE_BASE64` | Main App Store provisioning profile | App Store |
 | `PROV_PROF_DEVID_FINDER_BASE64`, `PROV_PROF_STORE_FINDER_BASE64` | Finder extension profiles | macpacker |
 | `PROV_PROF_DEVID_QL_BASE64`, `PROV_PROF_STORE_QL_BASE64` | Quick Look extension profiles | macpacker |
 | `JIRA_USER_EMAIL`, `JIRA_API_TOKEN` | Jira changelog enrichment (optional) | Apps that want it |
