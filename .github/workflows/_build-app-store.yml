@@ -112,6 +112,43 @@ jobs:
             -scheme "${{ vars.SCHEME_NAME_STORE }}" \
             -configuration Release
 
+      # ── Diagnostic: verify .p12 envelope before security import ────────────
+      # `security import` only says "MAC verification failed (wrong password?)"
+      # which conflates: bad base64, wrong password, incompatible crypto (PBES2
+      # vs PBE-SHA1-3DES). openssl gives a clearer failure mode. This step
+      # surfaces the real reason and prints the algorithms used.
+      - name: Verify .p12 envelope (diagnostic)
+        shell: bash
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > /tmp/certificate-check.p12
+
+          SIZE=$(wc -c < /tmp/certificate-check.p12)
+          echo "Decoded .p12 size: $SIZE bytes"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "::error::.p12 is suspiciously small ($SIZE bytes) — likely a base64 encoding issue with CERTIFICATE_P12_BASE64"
+            exit 1
+          fi
+
+          if ! openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys \
+                -passin "pass:$CERTIFICATE_PASSWORD" > /tmp/p12-info.txt 2>&1; then
+            echo "::error::openssl pkcs12 rejected the file. Common causes:"
+            echo "  - CERTIFICATE_PASSWORD doesn't match THIS .p12 (may differ from the Developer ID p12)"
+            echo "  - .p12 was corrupted during base64 encoding"
+            echo "── openssl output ──────────────────────────────────────────"
+            cat /tmp/p12-info.txt
+            rm -f /tmp/certificate-check.p12 /tmp/p12-info.txt
+            exit 1
+          fi
+
+          echo "── .p12 envelope info (algorithms used) ───────────────────"
+          grep -E "MAC:|PKCS7|PBES2|AES|3DES|Encrypted" /tmp/p12-info.txt | head -20 || true
+          echo "── openssl pkcs12 -info passed ────────────────────────────"
+          rm -f /tmp/certificate-check.p12 /tmp/p12-info.txt
+
       # ── Keychain ───────────────────────────────────────────────────────────
       - name: Set up keychain
         shell: bash

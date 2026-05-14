@@ -96,7 +96,7 @@ jobs:
 
   build-direct:
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.2.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.2.3
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
