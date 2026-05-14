@@ -17,7 +17,7 @@ permissions:
 jobs:
   beta:
     if: github.event.pull_request.merged == true
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.2.1
     secrets: inherit
     with:
       # ── Build toggles (default: build-direct=true, build-app-store=false) ─
