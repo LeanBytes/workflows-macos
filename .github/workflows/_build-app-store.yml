@@ -137,7 +137,10 @@ jobs:
           fi
 
           # Don't fail on non-zero exit; we evaluate the output instead.
-          openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys \
+          # -nokeys: never print private keys (essential).
+          # -nocerts: also suppress cert PEM blocks. Certs are public so this
+          # is paranoid but trims the log to envelope metadata only.
+          openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys -nocerts \
             -passin "pass:$APPLE_DISTR_PASSWORD" > /tmp/p12-info.txt 2>&1 || true
 
           echo "── openssl output ──────────────────────────────────────────"

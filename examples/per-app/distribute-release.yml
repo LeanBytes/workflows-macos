@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.3
     secrets: inherit
     with:
       # ── Build toggles (default: build-direct=true, build-app-store=false) ─
