@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.5
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.6
     secrets: inherit
     with:
       # ── Per-app: uncomment only what applies ────────────────────────────

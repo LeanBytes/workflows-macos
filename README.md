@@ -48,8 +48,10 @@ Set in your app's repo (or inherit from org):
 |---|---|---|
 | `DEVELOPER_ID_P12_BASE64` | Developer ID Application cert + private key (base64) | Direct |
 | `DEVELOPER_ID_PASSWORD` | Password for the Developer ID p12 | Direct |
-| `APPLE_DISTR_P12_BASE64` | Apple Distribution cert + private key (base64) | App Store |
+| `APPLE_DISTR_P12_BASE64` | Apple Distribution cert + private key — signs the .app | App Store |
 | `APPLE_DISTR_PASSWORD` | Password for the Apple Distribution p12 | App Store |
+| `MAC_DISTR_P12_BASE64` | Mac Installer Distribution cert + private key — signs the .pkg installer | App Store |
+| `MAC_DISTR_PASSWORD` | Password for the Mac Installer Distribution p12 | App Store |
 | `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | Both |
 | `PROV_PROF_DEVID_BASE64` | Main Developer ID provisioning profile | Direct |
 | `PROV_PROF_STORE_BASE64` | Main App Store provisioning profile | App Store |
