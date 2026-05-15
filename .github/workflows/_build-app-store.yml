@@ -314,6 +314,10 @@ jobs:
             <string>manual</string>
             <key>uploadSymbols</key>
             <true/>
+            <key>signingCertificate</key>
+            <string>Apple Distribution</string>
+            <key>installerSigningCertificate</key>
+            <string>Mac Installer Distribution</string>
             <key>provisioningProfiles</key>
             <dict>
               ${PROFILES_XML}
