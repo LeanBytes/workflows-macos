@@ -114,9 +114,12 @@ jobs:
 
       # ── Diagnostic: verify .p12 envelope before security import ────────────
       # `security import` only says "MAC verification failed (wrong password?)"
-      # which conflates: bad base64, wrong password, incompatible crypto (PBES2
-      # vs PBE-SHA1-3DES). openssl gives a clearer failure mode. This step
-      # surfaces the real reason and prints the algorithms used.
+      # which conflates: bad base64, wrong password, incompatible crypto.
+      # We run openssl to get a clearer signal — but DON'T trust its exit code:
+      # OpenSSL 3.x exits non-zero on legacy cert PBE algorithms (e.g. RC2)
+      # even when the MAC verified fine, because the default provider can't
+      # enumerate the safebags. Instead we look for explicit "Mac verify error"
+      # in the output, which is the only reliable wrong-password signal.
       - name: Verify .p12 envelope (diagnostic)
         shell: bash
         env:
@@ -133,20 +136,21 @@ jobs:
             exit 1
           fi
 
-          if ! openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys \
-                -passin "pass:$APPLE_DISTR_PASSWORD" > /tmp/p12-info.txt 2>&1; then
-            echo "::error::openssl pkcs12 rejected the file. Common causes:"
-            echo "  - APPLE_DISTR_PASSWORD doesn't match the APPLE_DISTR_P12_BASE64 .p12"
-            echo "  - .p12 was corrupted during base64 encoding"
-            echo "── openssl output ──────────────────────────────────────────"
-            cat /tmp/p12-info.txt
+          # Don't fail on non-zero exit; we evaluate the output instead.
+          openssl pkcs12 -in /tmp/certificate-check.p12 -info -nokeys \
+            -passin "pass:$APPLE_DISTR_PASSWORD" > /tmp/p12-info.txt 2>&1 || true
+
+          echo "── openssl output ──────────────────────────────────────────"
+          cat /tmp/p12-info.txt
+          echo "────────────────────────────────────────────────────────────"
+
+          if grep -qE "Mac verify error|invalid password" /tmp/p12-info.txt; then
+            echo "::error::Password mismatch — APPLE_DISTR_PASSWORD does not match the .p12"
             rm -f /tmp/certificate-check.p12 /tmp/p12-info.txt
             exit 1
           fi
 
-          echo "── .p12 envelope info (algorithms used) ───────────────────"
-          grep -E "MAC:|PKCS7|PBES2|AES|3DES|Encrypted" /tmp/p12-info.txt | head -20 || true
-          echo "── openssl pkcs12 -info passed ────────────────────────────"
+          echo "Envelope check passed — no MAC verification error. (security import will validate the rest.)"
           rm -f /tmp/certificate-check.p12 /tmp/p12-info.txt
 
       # ── Keychain ───────────────────────────────────────────────────────────
