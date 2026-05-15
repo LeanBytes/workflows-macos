@@ -333,6 +333,52 @@ jobs:
 
           ls -lh /tmp/build/export/
 
+      # ── Diagnostic on export failure ───────────────────────────────────────
+      # xcodebuild writes detailed logs to a temp .xcdistributionlogs directory.
+      # Print key info inline (keychain identities + log contents) and stage
+      # the directory for upload in the next step. Only runs on failure so it
+      # doesn't pollute successful runs.
+      - name: Diagnose export failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "── Keychain identities (codesigning policy) ───────────────"
+          security find-identity -v -p codesigning build.keychain || true
+          echo ""
+          echo "── Keychain identities (basic policy — installer certs) ──"
+          security find-identity -v -p basic build.keychain || true
+          echo ""
+          echo "── ALL keychain identities (no policy filter) ────────────"
+          security find-identity -v build.keychain || true
+          echo ""
+          echo "── xcdistributionlogs ────────────────────────────────────"
+          LOG_DIR=$(find /var/folders -name "*.xcdistributionlogs" -type d 2>/dev/null | head -1)
+          if [ -z "$LOG_DIR" ]; then
+            echo "No xcdistributionlogs directory found"
+            exit 0
+          fi
+          echo "Found: $LOG_DIR"
+          echo ""
+          ls -la "$LOG_DIR"
+          for f in "$LOG_DIR"/*; do
+            [ -f "$f" ] || continue
+            echo ""
+            echo "── $(basename "$f") ──────────────────────────────────"
+            cat "$f"
+          done
+          # Stage for the upload step (paths in /var/folders aren't artifact-friendly)
+          mkdir -p /tmp/diag-logs
+          cp -R "$LOG_DIR" /tmp/diag-logs/
+
+      - name: Upload xcdistributionlogs as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcdistributionlogs-app-store
+          path: /tmp/diag-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
       # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload .pkg as workflow artifact
         uses: actions/upload-artifact@v4
@@ -353,6 +399,6 @@ jobs:
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store.provisionprofile"
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store-finder.provisionprofile"
           rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store-quicklook.provisionprofile"
-          rm -rf /tmp/build
+          rm -rf /tmp/build /tmp/diag-logs
           rm -f /tmp/ExportOptions.plist
           security list-keychains -d user -s login.keychain
