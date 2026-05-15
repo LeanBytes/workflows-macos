@@ -150,7 +150,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.11
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.12
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -168,7 +168,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.11
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.12
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -247,11 +247,20 @@ jobs:
           PKG=$(ls ./artifacts/app-store/*.pkg | head -1)
           [ -f "$PKG" ] || { echo "::error::No .pkg in app-store artifact"; exit 1; }
 
-          xcrun altool --upload-app \
+          # altool exits 0 even on upload failures — we have to grep the
+          # output for explicit error markers to detect failure.
+          OUTPUT=$(xcrun altool --upload-app \
             --type macos \
             --file "$PKG" \
             --apiKey "$ASC_KEY_ID" \
-            --apiIssuer "$ASC_ISSUER_ID"
+            --apiIssuer "$ASC_ISSUER_ID" 2>&1)
+
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -qE "ERROR:|UPLOAD FAILED|Failed to upload"; then
+            echo "::error::altool reported failure on TestFlight upload"
+            exit 1
+          fi
 
           echo "TestFlight upload accepted: $(basename "$PKG")"
 

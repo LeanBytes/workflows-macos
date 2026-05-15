@@ -269,15 +269,25 @@ jobs:
       # ── Archive ────────────────────────────────────────────────────────────
       - name: Archive
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+
+          # App Store Connect requires CFBundleShortVersionString to be 1-3
+          # dotted integers (e.g. "2.10.0"). Strip any git-describe suffix
+          # like "-34-g9e090ee" that beta builds carry. Build-number remains
+          # the per-build differentiator (CFBundleVersion).
+          MARKETING_VERSION="${INPUT_VERSION%%-*}"
+          echo "Marketing version (stripped for ASC): ${MARKETING_VERSION}"
+          echo "Build number:                          ${{ inputs.build-number }}"
 
           xcodebuild archive \
             -scheme "${{ vars.SCHEME_NAME_STORE }}" \
             -configuration Release \
             -archivePath /tmp/build/app.xcarchive \
             -destination "generic/platform=macOS" \
-            MARKETING_VERSION=${{ inputs.version }} \
+            MARKETING_VERSION=${MARKETING_VERSION} \
             CURRENT_PROJECT_VERSION=${{ inputs.build-number }} \
             ${{ inputs.extra-xcodebuild-args }}
 
