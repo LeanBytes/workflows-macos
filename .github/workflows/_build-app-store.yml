@@ -317,7 +317,7 @@ jobs:
             <key>signingCertificate</key>
             <string>Apple Distribution</string>
             <key>installerSigningCertificate</key>
-            <string>Mac Installer Distribution</string>
+            <string>3rd Party Mac Developer Installer</string>
             <key>provisioningProfiles</key>
             <dict>
               ${PROFILES_XML}
@@ -352,7 +352,17 @@ jobs:
           security find-identity -v build.keychain || true
           echo ""
           echo "── xcdistributionlogs ────────────────────────────────────"
-          LOG_DIR=$(find /var/folders -name "*.xcdistributionlogs" -type d 2>/dev/null | head -1)
+          # find through /var/folders triggers permission warnings → noisy
+          # exits under pipefail. Search $TMPDIR first (where xcodebuild
+          # actually writes), fall back to /var/folders with || true so a
+          # failed find doesn't kill the diagnostic.
+          LOG_DIR=""
+          if [ -n "${TMPDIR:-}" ]; then
+            LOG_DIR=$(find "$TMPDIR" -maxdepth 2 -name "*.xcdistributionlogs" -type d 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$LOG_DIR" ]; then
+            LOG_DIR=$(find /var/folders -maxdepth 6 -name "*.xcdistributionlogs" -type d 2>/dev/null | head -1 || true)
+          fi
           if [ -z "$LOG_DIR" ]; then
             echo "No xcdistributionlogs directory found"
             exit 0
