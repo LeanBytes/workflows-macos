@@ -100,12 +100,12 @@ jobs:
       previous-tag: ${{ steps.previous.outputs.previous-tag }}
     steps:
       - name: Checkout caller repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Checkout shared scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: LeanBytes/workflows-macos
           ref: ${{ github.job_workflow_sha }}
@@ -148,7 +148,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.4
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -166,7 +166,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.4
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -195,12 +195,12 @@ jobs:
       PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
     steps:
       - name: Checkout caller repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Checkout shared scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: LeanBytes/workflows-macos
           ref: ${{ github.job_workflow_sha }}
