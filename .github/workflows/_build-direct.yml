@@ -344,6 +344,16 @@ jobs:
           set -euo pipefail
           xcrun stapler staple "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app"
 
+      # ── Verify (pre-package) ───────────────────────────────────────────────
+      - name: Verify notarization, staple, and signature (pre-package)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="/tmp/build/export/${{ vars.PRODUCT_NAME }}.app"
+          xcrun stapler validate -v "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          codesign --verify --deep --strict --verbose=4 "$APP"
+
       # ── Create DMG and ZIP ─────────────────────────────────────────────────
       - name: Create DMG and ZIP
         shell: bash
@@ -366,7 +376,12 @@ jobs:
 
           rm -rf /tmp/build/dmg
 
-          ditto -c -k --keepParent \
+          # --norsrc --noextattr --noacl: strip macOS-only metadata so the ZIP has
+          # no __MACOSX/._* companion entries. Archive Utility otherwise materializes
+          # those as ._* files inside Sparkle.framework/, which break the framework
+          # signature with "unsealed contents in the root directory of an embedded
+          # framework" and trigger Gatekeeper rejection on download.
+          ditto -c -k --keepParent --norsrc --noextattr --noacl \
             "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app" \
             "/tmp/build/${ZIP_NAME}"
 
@@ -374,6 +389,28 @@ jobs:
           echo "DMG_NAME=${DMG_NAME}" >> $GITHUB_ENV
           echo "ZIP_PATH=/tmp/build/${ZIP_NAME}" >> $GITHUB_ENV
           echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+      # ── Verify (post-package) ──────────────────────────────────────────────
+      # Pre-package verification can't see packaging-side breakage. Extract from
+      # each artifact and re-run Gatekeeper checks so a ZIP/DMG-only regression
+      # (e.g. __MACOSX companion files materializing inside an embedded framework)
+      # surfaces here, not in user downloads.
+      - name: Verify packaged DMG and ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_NAME="${{ vars.PRODUCT_NAME }}.app"
+
+          MOUNT=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | awk 'END{print $NF}')
+          spctl --assess --type execute --verbose=4 "$MOUNT/$APP_NAME"
+          codesign --verify --deep --strict --verbose=4 "$MOUNT/$APP_NAME"
+          hdiutil detach "$MOUNT"
+
+          TMP=$(mktemp -d)
+          ditto -x -k "$ZIP_PATH" "$TMP"
+          spctl --assess --type execute --verbose=4 "$TMP/$APP_NAME"
+          codesign --verify --deep --strict --verbose=4 "$TMP/$APP_NAME"
+          rm -rf "$TMP"
 
       # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload DMG + ZIP as workflow artifact
