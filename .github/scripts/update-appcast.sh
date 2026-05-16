@@ -75,6 +75,10 @@ for old in target.findall("description"):
     target.remove(old)
 
 desc = ET.SubElement(target, "description")
+# Tell Sparkle the CDATA is Markdown so it renders formatted in the
+# update window. Added in Sparkle late 2025 (sparkle-project/Sparkle#2810).
+# Older Sparkle versions ignore the attribute and treat the body as HTML.
+desc.set("{http://www.andymatuschak.org/xml-namespaces/sparkle}format", "markdown")
 desc.text = "@@CDATA_OPEN@@" + notes + "@@CDATA_CLOSE@@"
 
 tree.write(path, xml_declaration=True, encoding="utf-8")
