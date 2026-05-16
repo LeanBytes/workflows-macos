@@ -377,7 +377,7 @@ jobs:
 
       # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload DMG + ZIP as workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: direct-build
           path: |

@@ -148,7 +148,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.12
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.13
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -166,7 +166,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.12
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.13
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -209,14 +209,14 @@ jobs:
 
       - name: Download direct-build artifact
         if: inputs.build-direct
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: direct-build
           path: ./artifacts/direct
 
       - name: Download app-store-build artifact
         if: inputs.build-app-store
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: app-store-build
           path: ./artifacts/app-store
