@@ -85,6 +85,22 @@ on:
         type: string
         default: ""
 
+    # Secrets must be declared (not just inherited) when the originating
+    # caller of the reusable-workflow chain is in a different org than this
+    # repo — `secrets: inherit` is org-scoped against the OUTERMOST caller,
+    # not the immediate caller, so it refuses at every hop in the chain
+    # when the chain crosses an org boundary anywhere.
+    secrets:
+      DEVELOPER_ID_P12_BASE64:        { required: true }
+      DEVELOPER_ID_PASSWORD:          { required: true }
+      KEYCHAIN_PASSWORD:              { required: true }
+      PROV_PROF_DEVID_BASE64:         { required: true }
+      PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
+      PROV_PROF_DEVID_QL_BASE64:      { required: false }
+      ASC_KEY_ID:                     { required: true }
+      ASC_ISSUER_ID:                  { required: true }
+      ASC_KEY_BASE64:                 { required: true }
+
 permissions:
   contents: read
 

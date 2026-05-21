@@ -176,7 +176,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.18
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.23
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -189,12 +189,22 @@ jobs:
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-    secrets: inherit
+    # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
+    secrets:
+      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
+      PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
+      PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
+      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
 
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.18
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.23
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -204,7 +214,16 @@ jobs:
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-    secrets: inherit
+    # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
+    secrets:
+      APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
+      APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
+      MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}
+      MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_STORE_BASE64:         ${{ secrets.PROV_PROF_STORE_BASE64 }}
+      PROV_PROF_STORE_FINDER_BASE64:  ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}
+      PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
 
   publish-release:
     needs: [prepare, build-direct, build-app-store]
