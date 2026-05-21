@@ -93,56 +93,90 @@ on:
         default: "Config/Changelog.json"
 
 permissions:
-  contents: write          # to create GH pre-release
+  contents: write          # to create GH pre-release and push beta tag
   pull-requests: write     # to comment on merged PR
+
+# Serialize beta runs across the repository so two PR merges can't race on
+# the beta counter (both reading "3 existing v2.12.0-beta.*" tags then both
+# trying to push v2.12.0-beta.4).
+concurrency:
+  group: distribute-beta-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.compute.outputs.version }}
+      next-version: ${{ steps.compute.outputs.next-version }}
+      direct-marketing: ${{ steps.compute.outputs.direct-marketing }}
+      store-marketing: ${{ steps.compute.outputs.store-marketing }}
       build-number: ${{ steps.compute.outputs.build-number }}
       artifact-label: ${{ steps.compute.outputs.artifact-label }}
+      beta-tag: ${{ steps.compute.outputs.beta-tag }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # need full tag history for the safeguard + beta counter
 
-      - name: Checkout shared scripts
-        uses: actions/checkout@v6
-        with:
-          repository: LeanBytes/workflows-macos
-          ref: ${{ github.job_workflow_sha }}
-          path: .shared-ci
-          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
-
-      - name: Compute version + label
+      - name: Compute beta version
         id: compute
         shell: bash
+        env:
+          CHANGELOG_PATH: ${{ inputs.changelog-path }}
         run: |
           set -euo pipefail
 
-          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          VERSION=$(.shared-ci/.github/scripts/version-derive.sh beta)
-          ARTIFACT_LABEL="v${VERSION}-beta-${BUILD_NUMBER}"
+          NEXT_VERSION=$(python3 -c "
+          import json, sys
+          data = json.load(open('$CHANGELOG_PATH'))
+          versions = data.get('versions') or []
+          if not versions or 'version' not in versions[0]:
+              print('::error::$CHANGELOG_PATH has no versions[0].version', file=sys.stderr)
+              sys.exit(1)
+          print(versions[0]['version'])
+          ")
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
+          # Defensive backstop. The PR-build workflow (distribute-pr.yml)
+          # already enforces this on every PR open/push; by the time a merge
+          # reaches here the PR check should have caught it. Keep the check
+          # in case a PR was merged through a path that bypassed PR builds
+          # (admin override, force-merge, etc.).
+          if git rev-parse "refs/tags/v${NEXT_VERSION}" >/dev/null 2>&1; then
+            echo "::error::v${NEXT_VERSION} is already released. Config/Changelog.json's versions[0] needs a new entry. (This should have been caught by the PR check — investigate why it wasn't.)"
+            exit 1
+          fi
+
+          BETA_COUNT=$(git tag --list "v${NEXT_VERSION}-beta.*" | wc -l | tr -d ' ')
+          NEXT_BETA=$((BETA_COUNT + 1))
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          DIRECT_MARKETING="${NEXT_VERSION}-beta.${NEXT_BETA}"
+          STORE_MARKETING="${NEXT_VERSION}"
+          BETA_TAG="v${NEXT_VERSION}-beta.${NEXT_BETA}"
+          ARTIFACT_LABEL="${BETA_TAG}"
+
+          echo "next-version=${NEXT_VERSION}"          >> "$GITHUB_OUTPUT"
+          echo "direct-marketing=${DIRECT_MARKETING}"  >> "$GITHUB_OUTPUT"
+          echo "store-marketing=${STORE_MARKETING}"    >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}"          >> "$GITHUB_OUTPUT"
+          echo "artifact-label=${ARTIFACT_LABEL}"      >> "$GITHUB_OUTPUT"
+          echo "beta-tag=${BETA_TAG}"                  >> "$GITHUB_OUTPUT"
 
           echo "Beta build prepared:"
-          echo "  Marketing version: ${VERSION}"
-          echo "  Build number:      ${BUILD_NUMBER}"
-          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+          echo "  Next version:        ${NEXT_VERSION}"
+          echo "  Direct marketing:    ${DIRECT_MARKETING}"
+          echo "  App Store marketing: ${STORE_MARKETING}"
+          echo "  Build number:        ${BUILD_NUMBER}"
+          echo "  Beta tag:            ${BETA_TAG}"
 
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.18
     with:
-      version: ${{ needs.prepare.outputs.version }}
+      version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
       use-tuist: ${{ inputs.use-tuist }}
@@ -158,9 +192,9 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.18
     with:
-      version: ${{ needs.prepare.outputs.version }}
+      version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
       use-tuist: ${{ inputs.use-tuist }}
@@ -181,9 +215,11 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 30
     env:
-      VERSION: ${{ needs.prepare.outputs.version }}
+      NEXT_VERSION: ${{ needs.prepare.outputs.next-version }}
+      DIRECT_MARKETING: ${{ needs.prepare.outputs.direct-marketing }}
       BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
       ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      BETA_TAG: ${{ needs.prepare.outputs.beta-tag }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -254,10 +290,10 @@ jobs:
           echo "TestFlight upload accepted: $(basename "$PKG")"
 
       # ── Read release notes from Changelog.json ────────────────────────────
-      # Beta builds always use versions[0] (the in-progress entry) because
-      # version-derive.sh emits a git-describe-long string that doesn't match
-      # what Changelog.json indexes by. Developer convention: keep versions[0]
-      # in Changelog.json as the next-to-ship entry.
+      # Beta builds always use versions[0] (the in-progress entry). NEXT_VERSION
+      # at the job level already holds this value; we pass the literal "NEXT"
+      # sentinel to the script as a convenience so it doesn't re-parse the JSON
+      # for the version itself.
       - name: Read release notes from Changelog.json
         shell: bash
         env:
@@ -383,6 +419,21 @@ jobs:
             --content-type "application/xml"
           echo "Uploaded ${APPCAST_FILENAME} → S3 (beta channel now live)"
 
+      # ── Push the beta tag ─────────────────────────────────────────────────
+      # The tag is the durable record that this beta was cut and doubles as
+      # the counter source for the next run. Push BEFORE the GH pre-release
+      # so the release attaches to an existing tag rather than gh fabricating
+      # one from --target.
+      - name: Push beta tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$BETA_TAG" -m "Beta ${BETA_TAG#v}"
+          git push origin "$BETA_TAG"
+          echo "Pushed tag $BETA_TAG"
+
       # ── Final step: GitHub pre-release ────────────────────────────────────
       - name: Create GitHub pre-release
         shell: bash
@@ -394,13 +445,12 @@ jobs:
           if [ -f /tmp/notes.md ]; then
             NOTES_ARG="--notes-file /tmp/notes.md"
           else
-            NOTES_ARG="--notes \"Beta build ${ARTIFACT_LABEL}\""
+            NOTES_ARG="--notes \"Beta build ${BETA_TAG}\""
           fi
 
-          gh release create "${ARTIFACT_LABEL}" \
+          gh release create "$BETA_TAG" \
             --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "Beta ${ARTIFACT_LABEL}" \
+            --title "Beta ${BETA_TAG#v}" \
             --prerelease \
             $NOTES_ARG
 
@@ -412,7 +462,7 @@ jobs:
           ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
           PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.direct-marketing }}
           BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
           DISTRIBUTE_APP_STORE: ${{ inputs.build-app-store && inputs.distribute-app-store }}
           DISTRIBUTE_BETA_APPCAST: ${{ inputs.build-direct && inputs.distribute-beta-appcast }}

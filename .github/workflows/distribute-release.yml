@@ -107,37 +107,52 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout shared scripts
-        uses: actions/checkout@v6
-        with:
-          repository: LeanBytes/workflows-macos
-          ref: ${{ github.job_workflow_sha }}
-          path: .shared-ci
-          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
-
-      - name: Compute version + label
+      - name: Compute + validate release version
         id: compute
         shell: bash
+        env:
+          CHANGELOG_PATH: ${{ inputs.changelog-path }}
         run: |
           set -euo pipefail
 
-          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          VERSION=$(.shared-ci/.github/scripts/version-derive.sh release "${{ github.ref }}")
-          ARTIFACT_LABEL="v${VERSION}"
+          TAG="${{ github.ref_name }}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not a bare semver release tag (expected vX.Y.Z)."
+            exit 1
+          fi
+          TAG_VERSION="${TAG#v}"
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          JSON_VERSION=$(python3 -c "
+          import json, sys
+          data = json.load(open('$CHANGELOG_PATH'))
+          versions = data.get('versions') or []
+          if not versions or 'version' not in versions[0]:
+              print('::error::$CHANGELOG_PATH has no versions[0].version', file=sys.stderr)
+              sys.exit(1)
+          print(versions[0]['version'])
+          ")
+
+          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+            echo "::error::Tag '$TAG' (=$TAG_VERSION) does not match Config/Changelog.json versions[0].version (=$JSON_VERSION). Update Changelog.json to put $TAG_VERSION at versions[0] before tagging — or delete and re-tag once Changelog.json is correct."
+            exit 1
+          fi
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          ARTIFACT_LABEL="v${TAG_VERSION}"
+
+          echo "version=${TAG_VERSION}"         >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}"   >> "$GITHUB_OUTPUT"
           echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
 
           echo "Release build prepared:"
-          echo "  Marketing version: ${VERSION}"
+          echo "  Marketing version: ${TAG_VERSION}"
           echo "  Build number:      ${BUILD_NUMBER}"
           echo "  Artifact label:    ${ARTIFACT_LABEL}"
 
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.18
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -155,7 +170,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.18
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}

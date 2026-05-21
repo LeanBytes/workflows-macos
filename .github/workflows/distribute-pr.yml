@@ -47,6 +47,10 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
+      changelog-path:
+        description: "Path to Changelog.json in the caller repo (single source of truth for versioning)"
+        type: string
+        default: "Config/Changelog.json"
 
 permissions:
   contents: read
@@ -57,48 +61,62 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.compute.outputs.version }}
+      direct-marketing: ${{ steps.compute.outputs.direct-marketing }}
       build-number: ${{ steps.compute.outputs.build-number }}
       artifact-label: ${{ steps.compute.outputs.artifact-label }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # version-derive.sh needs full tag history
+          fetch-depth: 0  # need full tag history for the safeguard tag check
 
-      - name: Checkout shared scripts
-        uses: actions/checkout@v6
-        with:
-          repository: LeanBytes/workflows-macos
-          ref: ${{ github.job_workflow_sha }}
-          path: .shared-ci
-          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
-
-      - name: Compute version + label
+      - name: Compute PR version (and gate beta-publish safety)
         id: compute
         shell: bash
+        env:
+          CHANGELOG_PATH: ${{ inputs.changelog-path }}
         run: |
           set -euo pipefail
 
-          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          VERSION=$(.shared-ci/.github/scripts/version-derive.sh pr)
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          ARTIFACT_LABEL="v${VERSION}-beta-${BUILD_NUMBER}-pr${PR_NUMBER}"
+          NEXT_VERSION=$(python3 -c "
+          import json, sys
+          data = json.load(open('$CHANGELOG_PATH'))
+          versions = data.get('versions') or []
+          if not versions or 'version' not in versions[0]:
+              print('::error::$CHANGELOG_PATH has no versions[0].version', file=sys.stderr)
+              sys.exit(1)
+          print(versions[0]['version'])
+          ")
 
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "build-number=${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
+          # Safeguard (also enforced in distribute-beta.yml as a backstop):
+          # if v$NEXT_VERSION is already a tag, merging this PR would try to
+          # auto-publish a beta of an already-released version. Fail the PR
+          # check so the developer fixes Changelog.json before merging.
+          if git rev-parse "refs/tags/v${NEXT_VERSION}" >/dev/null 2>&1; then
+            echo "::error::Config/Changelog.json's versions[0].version (${NEXT_VERSION}) has already been released (tag v${NEXT_VERSION} exists). Prepend a new entry to versions[] in this PR before merging — otherwise the post-merge beta workflow would refuse to publish."
+            exit 1
+          fi
+
+          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          DIRECT_MARKETING="${NEXT_VERSION}-pr.${PR_NUMBER}.${BUILD_NUMBER}"
+          ARTIFACT_LABEL="v${DIRECT_MARKETING}"
+
+          echo "direct-marketing=${DIRECT_MARKETING}" >> "$GITHUB_OUTPUT"
+          echo "build-number=${BUILD_NUMBER}"         >> "$GITHUB_OUTPUT"
+          echo "artifact-label=${ARTIFACT_LABEL}"     >> "$GITHUB_OUTPUT"
 
           echo "PR build prepared:"
-          echo "  Marketing version: ${VERSION}"
-          echo "  Build number:      ${BUILD_NUMBER}"
-          echo "  Artifact label:    ${ARTIFACT_LABEL}"
+          echo "  Next version (from Changelog.json): ${NEXT_VERSION}"
+          echo "  Direct marketing:                   ${DIRECT_MARKETING}"
+          echo "  Build number:                       ${BUILD_NUMBER}"
+          echo "  Artifact label:                     ${ARTIFACT_LABEL}"
 
   build-direct:
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.18
     with:
-      version: ${{ needs.prepare.outputs.version }}
+      version: ${{ needs.prepare.outputs.direct-marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
       use-tuist: ${{ inputs.use-tuist }}
@@ -146,7 +164,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
           PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.direct-marketing }}
           BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
         with:
           script: |

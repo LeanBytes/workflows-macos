@@ -4,71 +4,90 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository purpose
 
-This repo is the **alignment ground for one canonical macOS CI/CD workflow** that takes the user fully off CI tracking — fire-and-forget distribution to both Sparkle (external) and the Mac App Store. The `.github/` trees under `workflows/<app>/` are extracted copies from three real macOS apps (**filefillet**, **flowmoose**, **macpacker**) that the user owns; workflows are iterated here and propagated by hand back to the originating repos. Nothing in this directory is wired to a runner — no top-level `.github/workflows`, no source code, no Xcode project.
+This repo is the **canonical shared macOS CI/CD workflow** for three apps the user owns (filefillet, flowmoose, macpacker). It distributes builds to both Sparkle (Developer ID Direct) and the Mac App Store / TestFlight, with the goal of fire-and-forget release management. Each app repo has tiny per-app shell workflows that call into the orchestrators here via `uses: LeanBytes/workflows-macos/.github/workflows/<orchestrator>.yml@<tag>`.
 
-The three apps are at different points along the path to the canonical pattern, not three independent specimens. **FlowMoose is the leading edge** — most new patterns are tried there first. **filefillet** is the minimum viable version (single-channel Sparkle, no Jira, no beta). **macpacker** carries extra surface area the canonical pattern eventually has to absorb (App Store + Finder/Quick Look extensions today; localization across many languages still to come).
+**FlowMoose is the leading edge** — new workflow patterns are proven there first, then ported to filefillet and macpacker by updating each app's per-app shell to the new `@<tag>` and adjusting their inputs.
 
-When working in this directory, treat each `workflows/<app>/.github/` subtree as if it were that app's repo root (e.g. `version-derive.sh` expects to be invoked from `workflows/flowmoose/`, where `git describe` runs against this repo's history if you actually execute it — which is usually wrong; the scripts are intended to be read or unit-tested, not run live).
+Layout: `.github/workflows/_build-{direct,app-store}.yml` are the internal callees; `.github/workflows/distribute-{pr,beta,release}.yml` are the orchestrators; `.github/scripts/` has two helpers (`changelog-from-json.sh`, `update-appcast.sh`); `examples/per-app/` has the per-app shell templates. The actual filefillet / flowmoose / macpacker source trees live in their own repos.
 
-## The three apps and how far along each one is
+## The three apps
 
-All three follow the same caller/callee workflow split but diverge in versioning, distribution channels, and changelog handling. Read this as "leading edge → minimum viable → extra surface area still to integrate" — the drift is the gap to close, not the steady state:
+All three now share the canonical pipeline. The single source of truth for versioning is `Config/Changelog.json` in each app repo, plus git tags as ship-moment markers. The remaining differences are scope, not pipeline:
 
-| App | Versioning source | Distribution channels | Notes |
-|---|---|---|---|
-| **flowmoose** (leading edge) | `git describe --tags --long` (LB-402); xcconfig only holds `0.0.0-dev` placeholder | Direct (Sparkle, **stable + beta** channels) | Most advanced. Python appcast script driven by `CHANGELOG.json`, with Jira enrichment. Uses **Tuist** to generate the Xcode project. Caches Whisper `ggml-base.bin`. Can run on a self-hosted runner (`agent-alex`). Snapshot builds are published to the beta appcast channel. |
-| **filefillet** (minimum viable) | `Config/Version.xcconfig` → `MARKETING_VERSION` | Direct (Sparkle, single channel) | Simplest. AWK-based appcast script reads `CHANGELOG.md`, keeps 3 items, currently uploads to `appcast_test.xml`. |
-| **macpacker** (extra surface area) | `Config/Version.xcconfig` → `MARKETING_VERSION` | Direct (Sparkle) **and** App Store (TestFlight) | Has Finder + Quick Look extensions — three provisioning profiles, three bundle IDs. Extra `distribute-macos-store.yml` builds with the store scheme and uploads via `xcrun altool`. Localization across many languages is on the roadmap but not started. |
+| App | Distribution channels | Notes |
+|---|---|---|
+| **flowmoose** (leading edge) | Direct (Sparkle, **stable + beta** channels) | Uses **Tuist** to generate the Xcode project. Caches Whisper `ggml-base.bin`. Can run on a self-hosted runner (`agent-alex`). Beta snapshots publish to the Sparkle beta channel. |
+| **filefillet** | Direct (Sparkle, single channel) **and** App Store | Both channels. |
+| **macpacker** (extra surface area) | Direct (Sparkle) **and** App Store (TestFlight) | Has Finder + Quick Look extensions — three provisioning profiles, three bundle IDs. Localization across many languages is on the roadmap but not started. |
 
-## Roadmap (incremental, in this order)
+## Versioning model (current — as of v0.3.18)
 
-1. **Stabilize the changelog → appcast pipeline in FlowMoose, then unify the appcast script across apps.** Today `generate-changelog.sh` walks `git log` for `(#NN)`-suffixed squash-merges, with a fragile fallback for `pull_request: closed` events (the `PR_TITLE`/`PR_NUMBER` workaround in `generate-changelog.sh`). Planned replacement: switch the changelog **source** to **GitHub Releases auto-generated notes** — GH already produces the diff between two versions natively, which collapses most of the per-app divergence in `generate-changelog.sh` and `update-appcast.sh`.
-2. **Propagate the unified workflow to filefillet and macpacker** once it's stable in FlowMoose.
-3. **macpacker localization + App Store**: add a CI step that translates strings into the app's supported languages and uploads the translated build to the App Store. Not started.
+`Config/Changelog.json` in each caller repo is the single source of truth for the next-to-ship version and the customer-facing release notes. Git tags mark ship moments:
 
-The user works **step-by-step** — prove a change on the leading-edge app first, then port. Don't propose a big-bang rewrite that touches all three at once.
+- `versions[0].version` = the in-progress version being built toward. Beta builds read this.
+- Git tag `vX.Y.Z` = the stable release of `X.Y.Z`. Pushing this tag triggers the release flow; CI validates the tag matches `versions[0].version` in the tagged commit's Changelog.json.
+- Git tag `vX.Y.Z-beta.N` = the Nth beta cut for in-progress `X.Y.Z`. Auto-pushed by `distribute-beta.yml` on every PR merge.
 
-## Shared workflow architecture (all three apps)
+**Marketing version per channel:**
+- Direct (Sparkle): `<next>-beta.<N>` for betas (e.g. `2.12.0-beta.4`), bare `<next>` for releases.
+- App Store / TestFlight: bare `<next>` always — Apple's iTMS rejects non-`N.N.N` strings in `CFBundleShortVersionString`.
 
-Each app's `.github/workflows/` has the same caller/callee split:
+**Safeguard (the gate):** if `versions[0].version` already has a corresponding `v<X.Y.Z>` tag, beta builds refuse to publish. The check is surfaced as a PR check in `distribute-pr.yml`'s `prepare` step (primary feedback surface for the developer) and repeated in `distribute-beta.yml` as a defensive backstop. Commits and merges are never blocked by this — only the auto-publish work refuses to run against stale state. Fix: prepend a new entry to `versions[]` in `Config/Changelog.json`.
 
-- **`distribute-build.yml`** — `workflow_call` only, never triggered directly. Inputs: `version`, `build-number`, `artifact-label`. Does: checkout (with submodules) → resolve SwiftPM (or Tuist for flowmoose) → keychain + provisioning profile + ASC API key setup → `xcodebuild archive` → `xcodebuild -exportArchive` (Developer ID, manual signing) → `notarytool submit --wait` → `stapler staple` → DMG + ZIP via `hdiutil` and `ditto` → `aws s3 cp` to `eu-central-1` → cleanup (deletes keychain, profiles, ASC key — `if: always()`).
-- **`distribute-pr.yml`** — `pull_request: [opened, synchronize]`. `prepare` (ubuntu) computes version/build/artifact-label → calls `distribute-build.yml` → `comment` posts a Markdown table of DMG/ZIP S3 links on the PR. Artifact label format: `v<version>-beta-<buildnumber>-pr<N>`.
-- **`distribute-snapshot.yml`** — `pull_request: [closed]` on `main`, gated by `merged == true`. Same as PR flow but artifact label is `v<version>-beta-<buildnumber>` (no PR suffix). flowmoose additionally publishes to the **beta** Sparkle channel here.
-- **`distribute-release.yml`** — `push: tags: ['v*.*.*']`. Builds, then `update-appcast` job downloads the latest Sparkle, runs `generate_appcast --ed-key-file -`, injects release notes via `update-appcast.sh`, and uploads `appcast.xml` (+ `CHANGELOG.json` for flowmoose) to S3.
+## Roadmap (remaining work)
 
-Conventions that hold across all three:
+1. **macpacker localization + App Store**: add a CI step that translates strings into the app's supported languages and uploads the translated build to the App Store. Not started.
 
-- **Build number** is `date -u +%y%m%d%H%M%S` — UTC timestamp, strictly monotonic, used as `CFBundleVersion` / `CURRENT_PROJECT_VERSION`.
-- **Marketing version** is injected at archive time via `xcodebuild MARKETING_VERSION=…` (and for filefillet/macpacker, also pre-applied with `agvtool`).
+The user works **step-by-step** — prove a change on the leading-edge app (FlowMoose) first, then port to filefillet and macpacker. Don't propose a big-bang rewrite that touches all three at once.
+
+## Shared workflow architecture
+
+Internal callees (`workflow_call` only, never triggered directly; per-app shells must not call them directly either — go through the orchestrators):
+
+- **`_build-direct.yml`** — inputs: `version`, `build-number`, `artifact-label`. Does: checkout (with submodules) → resolve SwiftPM (or Tuist when `use-tuist`) → keychain + provisioning profile + ASC API key setup → `xcodebuild archive` → `xcodebuild -exportArchive` (Developer ID, manual signing) → `notarytool submit --wait` → `stapler staple` → pre-package verify → DMG + ZIP via `hdiutil` and `ditto` (the latter with `--norsrc --noextattr --noacl` to avoid `__MACOSX/._*` injection per v0.3.15) → post-package verify → upload as `direct-build` GH Actions artifact. Cleanup (deletes keychain, profiles, ASC key — `if: always()`).
+- **`_build-app-store.yml`** — same shape, but exports for App Store with `xcrun altool`-compatible signing, produces a `.pkg`.
+
+Orchestrators (each app's per-app shell calls one of these per trigger):
+
+- **`distribute-pr.yml`** — fired by the caller's shell on `pull_request: [opened, synchronize]`. `prepare` job reads `Config/Changelog.json`, validates `versions[0].version` doesn't already have a release tag (the **safeguard PR check**), computes marketing version `<next>-pr.<PR#>.<buildnumber>`, builds direct, uploads to S3, comments on the PR with download links.
+- **`distribute-beta.yml`** — fired by the caller's shell on `pull_request: closed` + `merged == true`. `prepare` reads Changelog.json, repeats the safeguard, counts existing `v<next>-beta.*` tags, picks the next number. Two channel-specific marketing versions are computed: direct = `<next>-beta.<N>`, App Store = `<next>` (Apple rejects suffixes). Builds, uploads, updates the Sparkle beta channel (when enabled), pushes `v<next>-beta.<N>` tag, creates a GH pre-release. A repo-level `concurrency` group serializes runs so the beta counter never races.
+- **`distribute-release.yml`** — fired by the caller's shell on `push: tags: ['v*.*.*']` (with `!v*-beta.*` exclusion to ignore auto-pushed beta tags). `prepare` validates the pushed tag matches `Config/Changelog.json` `versions[0].version` and fails loudly on mismatch. Marketing version = the bare semver from the tag for both direct and App Store. Builds, uploads, updates the stable appcast, creates the GH Release last (strict fail-safe order).
+
+Conventions:
+
+- **Build number** is `date -u +%y%m%d%H%M%S` — UTC timestamp, strictly monotonic, used as `CFBundleVersion` / `CURRENT_PROJECT_VERSION`. Every build path uses this.
+- **Marketing version** is the `version` input passed into `_build-direct.yml` / `_build-app-store.yml` and injected at archive time via `xcodebuild MARKETING_VERSION=…`. The orchestrators compute and pass channel-specific values (see above).
 - **Signing**: Developer ID p12 imported into an ephemeral `build.keychain`; provisioning profile name is read from the decoded `.provisionprofile` via `security cms -D | plutil -extract Name raw -`.
-- **Notarization**: ASC API key (`AuthKey_<id>.p8`) under `~/.appstoreconnect/private_keys/`, `notarytool submit --wait`. flowmoose additionally captures and prints the rejection log on failure.
+- **Notarization**: ASC API key (`AuthKey_<id>.p8`) under `~/.appstoreconnect/private_keys/`, `notarytool submit --wait`. Rejection log is fetched and printed on failure.
 - **Artifact distribution**: S3 bucket in `eu-central-1`. `${{ vars.S3_DISTRIBUTION_PATH }}` is the upload target; `${{ vars.S3_DOWNLOAD_URL }}` is the public base URL embedded in PR comments. (macpacker stores `S3_DISTRIBUTION_PATH` as a **secret**, not a var — drift worth normalizing.)
-- **Runner**: hosted `macos-26` everywhere by default. flowmoose's `distribute-build.yml` accepts a `runs-on` input (JSON-encoded label or label array) and its snapshot workflow passes `["self-hosted","agent-alex"]`.
+- **Runner**: hosted `macos-26` everywhere by default. `_build-direct.yml` accepts a `runs-on` input (JSON-encoded label or label array); FlowMoose's beta shell passes `["self-hosted","agent-alex"]`.
 
-## flowmoose's changelog pipeline (the part that actually has logic)
+## Scripts in `.github/scripts/`
 
-`workflows/flowmoose/.github/scripts/` is where the non-trivial code lives. The pipeline runs in this order on every release/snapshot:
+Just two scripts now; both consume `Config/Changelog.json`:
 
-1. **`version-derive.sh <release <tag>|snapshot|pr>`** — emits the marketing version on stdout. `release` parses `v1.2.3` (or `refs/tags/v1.2.3`); `snapshot`/`pr` run `git describe --tags --long --match='v*.*.*' --exclude='*-beta-*'`. Callers must use `actions/checkout` with `fetch-depth: 0`, otherwise `git describe` fails. The `--long` form is intentional — it always produces `X.Y.Z-N-gSHA` even on a tag, so each snapshot has a unique marketing version (LB-402).
-2. **`generate-changelog.sh`** — reads existing `CHANGELOG.json` from S3 (falls back to `Config/CHANGELOG.json` seed), then walks `git log` for new PR-merge entries (filtered by trailing `(#NN)` suffix, per LB-326 — direct pushes are deliberately ignored). Idempotency key is `{version, channel}` for stable and `{version, build, channel}` for beta. The **`PR_TITLE` + `PR_NUMBER` env-var path** is the post-LB-397 beta workaround: on `pull_request: closed`, HEAD is a synthetic merge commit whose `HEAD~1..HEAD` doesn't carry `(#NN)`, so the script bypasses git-log and emits one entry built from the event payload.
-3. **`enrich-changelog-with-jira.sh`** — for `versions[0].entries[]`, extracts `LB-NNN` from `entry.title` (or prefers an explicit `entry.jira_key`), fetches `/rest/api/3/issue/<key>?fields=summary`, and replaces `entry.title` with the Jira summary. Only `versions[0]` is touched; history is immutable. **The script never fails the build** — missing token, 401, 404, network errors all log `::warning::` (or `::error::` for 401) and leave the original title.
-4. **`update-appcast.sh`** — `generate_appcast` doesn't emit `<description>`, so this script finds the matching `<item>` (by `sparkle:version` for snapshots — build number is the unique key — or `sparkle:shortVersionString` for stable releases) and injects a CDATA description. Then it trims to `APPCAST_MAX_ITEMS` (default 20). filefillet and macpacker have an older AWK-based variant of this script that hardcodes a trim to 3 items.
+1. **`changelog-from-json.sh`** — renders Markdown release notes for the appcast `<description>` and GH Release body. Takes `CHANGELOG_PATH` + `VERSION` (exact marketing version, or the `NEXT` sentinel for `versions[0]`). Bucketing: `feat → New Features`, `fix → Bug Fixes`, `core → Improvements`. `chore` and any unrecognized type are silently dropped.
+2. **`update-appcast.sh`** — `generate_appcast` doesn't emit `<description>`, so this script finds the matching `<item>` (by `sparkle:version` for betas — build number is the unique key — or `sparkle:shortVersionString` for stable releases) and injects a CDATA description. Then it trims to `APPCAST_MAX_ITEMS` (default 20). Trim and inject run in a single ElementTree pass; CDATA wrapping happens post-write as a text substitution so the trim doesn't dissolve the wrapper.
 
-**Convention enforcement**: PR titles must contain an `LB-NNN` Jira key for the Jira enrichment step to do anything useful, and squash-merge commits to `main` must end with `(#NN)` for the stable channel's git-log walk to pick them up.
+Versioning, beta-counting, and tag validation are all **inline** in the orchestrator workflows now — there is no `version-derive.sh` (deleted in v0.3.18). See the prepare-job steps in `distribute-{pr,beta,release}.yml` for the actual logic.
 
-## Running the flowmoose unit tests
+## Testing the scripts locally
 
-Bash tests for the changelog scripts live in `workflows/flowmoose/.github/scripts/tests/`. They run directly with bash from the **flowmoose subdirectory** (they resolve paths relative to `$REPO_ROOT = SCRIPT_DIR/../../..`):
+`changelog-from-json.sh` and `update-appcast.sh` are pure data transforms — easy to exercise from the repo root with a hand-crafted fixture:
 
 ```bash
-cd workflows/flowmoose
-bash .github/scripts/tests/test-version-derive.sh
-bash .github/scripts/tests/test-enrich-changelog.sh
-bash .github/scripts/tests/test-generate-changelog-beta-from-pr.sh
+# changelog-from-json.sh
+cat > /tmp/cl.json <<'JSON'
+{"versions":[{"version":"2.12.0","items":[
+  {"type":"feat","title":{"en":"New thing"}},
+  {"type":"fix","title":{"en":"Broken thing"}}
+]}]}
+JSON
+CHANGELOG_PATH=/tmp/cl.json VERSION=2.12.0 bash .github/scripts/changelog-from-json.sh
+CHANGELOG_PATH=/tmp/cl.json VERSION=NEXT     bash .github/scripts/changelog-from-json.sh
 ```
 
-Caveat: `test-version-derive.sh`'s `snapshot`/`pr` cases call `git describe` against the **current repo's** history — they're written for the originating flowmoose repo and will fail or produce odd results when run from inside `research-ci` (which has no `v*.*.*` tags). `test-enrich-changelog.sh` is self-contained (it spins up a mock HTTP server) and works anywhere with `python3` and `curl`.
+The deleted Bash test suite for `version-derive.sh`, `generate-changelog.sh`, and `enrich-changelog-with-jira.sh` is gone with the scripts themselves.
 
 ## Required GitHub secrets and vars (across all three workflows)
 
@@ -78,12 +97,12 @@ Don't hardcode these — they're read from `secrets.*` and `vars.*` in every wor
 - **Apple**: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64`.
 - **Sparkle**: `SPARKLE_ED_PRIVATE_KEY` (EdDSA private key piped to `generate_appcast --ed-key-file -`).
 - **AWS**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (region hardcoded to `eu-central-1`).
-- **Jira (flowmoose)**: `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`. Empty token → enrichment no-ops cleanly.
-- **Vars**: `SCHEME_NAME`, `BUNDLE_ID`, `PRODUCT_NAME`, `S3_DISTRIBUTION_PATH`, `S3_DOWNLOAD_URL`. macpacker also has `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK`, `SCHEME_NAME_STORE`. flowmoose adds `JIRA_BASE_URL`.
+- **Vars**: `SCHEME_NAME`, `BUNDLE_ID`, `PRODUCT_NAME`, `S3_DISTRIBUTION_PATH`, `S3_DOWNLOAD_URL`. macpacker also has `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK`, `SCHEME_NAME_STORE`.
+
+(Jira enrichment was removed in v0.3.17 when the notes source moved to `Config/Changelog.json`. The Jira secrets/vars on the caller repos are now dead config and can be deleted on the user's schedule.)
 
 ## Editing patterns
 
-- **The end state is one workflow across all three apps.** Drift exists because filefillet and macpacker haven't been brought up to FlowMoose's level yet, not because they should stay simpler. Propagating a stabilized FlowMoose pattern to the other two is in-scope work, not feature creep.
-- **Move incrementally.** Prove a change in FlowMoose, then port to filefillet, then macpacker. The user has explicitly asked for step-by-step — don't roll a single change across all three apps in one pass unless it's a trivially shared snippet (e.g. a one-line `aws s3 cp` flag).
-- **Cross-app shared steps (keychain setup, S3 upload, ExportOptions.plist) should still land in all three at once** to keep the diffs informative while the unification is in flight.
-- **`update-appcast.sh` exists in all three** but the FlowMoose version (Python, takes `NOTES` env var, trims to 20) is incompatible with the filefillet/macpacker version (Bash/AWK, reads `CHANGELOG_PATH`, trims to 3) — these are separate scripts that share a name. The FlowMoose variant is the forward direction; the others will be replaced when item (2) of the roadmap lands.
+- **All workflow logic lives here in `workflows-macos`; per-app shells only declare triggers and inputs.** When iterating on logic, edit `_build-*.yml` / `distribute-*.yml` in this repo and bump the tag. Don't fork logic into per-app shells.
+- **Move incrementally per app.** Prove a workflow change end-to-end on the leading-edge app (FlowMoose), then port the per-app shell to filefillet and macpacker. The user has explicitly asked for step-by-step — don't roll a single change across all three apps in one pass unless it's a trivially shared snippet.
+- **When bumping the shared workflow's tag, also bump the `@v<tag>` callouts inside the shared workflows AND in `examples/per-app/`.** This is the convention enforced by every v0.3.x release commit message ("Cross-callouts and example shells bumped to @v0.3.X").

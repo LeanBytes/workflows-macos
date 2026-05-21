@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.18
     secrets: inherit
     with:
       # ── Per-app: uncomment only what applies ────────────────────────────
@@ -30,3 +30,6 @@ jobs:
       # pre-build-cache-path: FlowMoose/Models/ggml-base.bin
       # pre-build-cache-key: whisper-base-model-v1
       # pre-build-script: .ci/download-whisper-model.sh
+
+      # ── Changelog.json (default: Config/Changelog.json) ─────────────────
+      # changelog-path: Config/Changelog.json

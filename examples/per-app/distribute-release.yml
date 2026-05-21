@@ -7,14 +7,16 @@ name: Distribute Release
 
 on:
   push:
-    tags: ['v*.*.*']
+    tags:
+      - 'v*.*.*'
+      - '!v*-beta.*'   # exclude beta tags auto-pushed by distribute-beta.yml
 
 permissions:
   contents: write    # for the GH Release
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.17
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.18
     secrets: inherit
     with:
       # ── Build toggles (default: build-direct=true, build-app-store=false) ─
