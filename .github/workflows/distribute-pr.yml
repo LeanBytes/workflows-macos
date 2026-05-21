@@ -130,7 +130,7 @@ jobs:
 
   build-direct:
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.23
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.24
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -184,7 +184,7 @@ jobs:
 
       - name: Post PR comment
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
