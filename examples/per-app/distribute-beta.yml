@@ -17,7 +17,7 @@ permissions:
 jobs:
   beta:
     if: github.event.pull_request.merged == true
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.16
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.17
     secrets: inherit
     with:
       # ── Build toggles (default: build-direct=true, build-app-store=false) ─
@@ -43,3 +43,6 @@ jobs:
       # ── Runners ─────────────────────────────────────────────────────────
       # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
       # runs-on-publish: '["self-hosted","agent-alex"]' # FlowMoose
+
+      # ── Changelog.json (default: Config/Changelog.json) ─────────────────
+      # changelog-path: Config/Changelog.json

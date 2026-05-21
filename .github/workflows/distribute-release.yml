@@ -84,6 +84,10 @@ on:
       appcast-seed-path:
         type: string
         default: "Config/appcast.xml"
+      changelog-path:
+        description: "Path to Changelog.json in the caller repo (source for appcast description + GH Release body)"
+        type: string
+        default: "Config/Changelog.json"
 
 permissions:
   contents: write          # to create GH Release
@@ -97,7 +101,6 @@ jobs:
       version: ${{ steps.compute.outputs.version }}
       build-number: ${{ steps.compute.outputs.build-number }}
       artifact-label: ${{ steps.compute.outputs.artifact-label }}
-      previous-tag: ${{ steps.previous.outputs.previous-tag }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -131,24 +134,10 @@ jobs:
           echo "  Build number:      ${BUILD_NUMBER}"
           echo "  Artifact label:    ${ARTIFACT_LABEL}"
 
-      - name: Find previous stable tag
-        id: previous
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Most recent stable tag BEFORE the one we're releasing.
-          CURRENT="${{ github.ref_name }}"
-          PREV=$(git describe --tags --match='v*.*.*' --exclude='*-beta-*' --exclude="$CURRENT" --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$PREV" ]; then
-            echo "::warning::No previous stable tag found — release notes will be empty"
-          fi
-          echo "previous-tag=${PREV}" >> "$GITHUB_OUTPUT"
-          echo "Previous stable tag: ${PREV:-<none>}"
-
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.16
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.17
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -166,7 +155,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.16
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.17
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -192,7 +181,6 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
       ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
-      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous-tag }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -221,34 +209,21 @@ jobs:
           name: app-store-build
           path: ./artifacts/app-store
 
-      # ── Fetch release notes (Markdown from GH auto-notes) ─────────────────
-      # Compute notes BEFORE creating the GH Release, so the Release is the
-      # very last thing to land if everything else succeeds.
-      - name: Fetch GitHub auto-generated release notes
-        if: env.PREVIOUS_TAG != ''
+      # ── Read release notes from Changelog.json ────────────────────────────
+      # Curated, customer-facing notes from the caller's Changelog.json (same
+      # file the app reads for its What's New view). Feeds both the appcast
+      # description and the GH Release body downstream.
+      - name: Read release notes from Changelog.json
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANGELOG_PATH: ${{ inputs.changelog-path }}
+          MARKETING_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          PREVIOUS_TAG="$PREVIOUS_TAG" \
-          TARGET="${{ github.ref_name }}" \
-          .shared-ci/.github/scripts/release-notes-fetch.sh > /tmp/notes.md
+          CHANGELOG_PATH="$CHANGELOG_PATH" VERSION="$MARKETING_VERSION" \
+            .shared-ci/.github/scripts/changelog-from-json.sh > /tmp/notes.md
           echo "Notes written ($(wc -c < /tmp/notes.md) bytes)"
-
-      - name: Enrich release notes with Jira summaries
-        if: env.PREVIOUS_TAG != ''
-        shell: bash
-        env:
-          IN_PATH: /tmp/notes.md
-          OUT_PATH: /tmp/notes.md
-          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
-          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          JIRA_KEY_PREFIX: ${{ vars.JIRA_KEY_PREFIX || 'LB' }}
-        run: |
-          set -euo pipefail
-          .shared-ci/.github/scripts/enrich-changelog-with-jira.sh
+          cat /tmp/notes.md
 
       # ── GATE 1: App Store upload ──────────────────────────────────────────
       - name: Install App Store Connect API key (for altool)
