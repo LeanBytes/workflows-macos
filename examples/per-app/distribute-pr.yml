@@ -14,8 +14,24 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.18
-    secrets: inherit
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.22
+    # `secrets: inherit` only works when the caller is in the same org/enterprise
+    # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
+    # personal org) must pass secrets explicitly — `inherit` silently passes
+    # nothing across the boundary. The explicit list below works universally.
+    secrets:
+      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
+      # PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}   # only if has-finder-extension: true
+      # PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}       # only if has-quicklook-extension: true
+      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
+      AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}          # only if you fork workflows-macos private
     with:
       # ── Per-app: uncomment only what applies ────────────────────────────
       # use-tuist: true                # FlowMoose

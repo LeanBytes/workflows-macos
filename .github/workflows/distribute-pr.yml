@@ -51,6 +51,22 @@ on:
         description: "Path to Changelog.json in the caller repo (single source of truth for versioning)"
         type: string
         default: "Config/Changelog.json"
+    # Declared so cross-org / cross-account callers (where `secrets: inherit`
+    # silently passes nothing) can pass secrets explicitly. Same-org callers
+    # can keep using `secrets: inherit` — the declarations are no-ops for them.
+    secrets:
+      DEVELOPER_ID_P12_BASE64:        { required: false }
+      DEVELOPER_ID_PASSWORD:          { required: false }
+      KEYCHAIN_PASSWORD:              { required: false }
+      PROV_PROF_DEVID_BASE64:         { required: false }
+      PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
+      PROV_PROF_DEVID_QL_BASE64:      { required: false }
+      ASC_KEY_ID:                     { required: false }
+      ASC_ISSUER_ID:                  { required: false }
+      ASC_KEY_BASE64:                 { required: false }
+      AWS_ACCESS_KEY_ID:              { required: false }
+      AWS_SECRET_ACCESS_KEY:          { required: false }
+      SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
   contents: read

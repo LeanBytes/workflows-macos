@@ -131,7 +131,20 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.18`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.22`), not `@main`. Uncomment per-app inputs as needed.
+
+**On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
+
+```yaml
+jobs:
+  pr:
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.22
+    secrets: inherit
+    with:
+      # …
+```
+
+If your consumer repo is in a **different account or org** (a personal account, a different org, a fork without an enterprise tie), `secrets: inherit` silently passes nothing — every signing step then fails with a `security: SecKeychainItemImport` error. The example shells use the explicit `secrets:` block that works universally. Keep that block as-is unless you want the same-org shortcut.
 
 The beta and release orchestrators expose four independent toggles for build/distribute control:
 
