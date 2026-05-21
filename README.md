@@ -1,48 +1,73 @@
 # workflows-macos
 
-Reusable GitHub Actions workflows for macOS app distribution — Direct (Sparkle) + App Store (TestFlight / App Store Connect). Used by every macOS app under the **LeanBytes** org.
+Reusable GitHub Actions workflows for macOS app distribution — Developer ID Direct (Sparkle) + App Store (TestFlight / App Store Connect). Used by macOS apps across the **LeanBytes** org and personal repos (e.g. open-source [macpacker](https://github.com/sarensw/macpacker)).
 
-Adding a new app means setting ~7 secrets + ~4 vars in the app repo and dropping three thin shell workflows into `.github/workflows/`. No build/sign/notarize/upload code lives in the consuming repo.
+Adding a new app means: dropping a curated `Config/Changelog.json` in your repo, setting ~9 secrets + ~5 vars, and copying three thin shell workflows into `.github/workflows/`. No build/sign/notarize/upload code lives in the consumer repo.
 
 ## Architecture
 
 ```
-Per-app shell (event-triggered)             Shared orchestrator                 Shared callees
-─────────────────────────────              ─────────────────────────           ──────────────────────────
-.github/workflows/distribute-pr.yml ──→    distribute-pr.yml                ┐
-  on: pull_request                           prepare → build-direct → publish─┤
-                                                                              │
-distribute-beta.yml             ──→        distribute-beta.yml                │   _build-direct.yml
-  on: pull_request closed (merged)           prepare → build-direct + ────────┼──→  (artifact: direct-build)
-                                             build-app-store → publish-beta   │
-                                                                              │   _build-app-store.yml
-distribute-release.yml          ──→        distribute-release.yml             ┘    (artifact: app-store-build)
-  on: push tags v*.*.*                       prepare → build-direct +
-                                             build-app-store → publish-release
+Per-app shell (event-triggered)             Shared orchestrator                  Shared callees
+─────────────────────────────              ─────────────────────────            ──────────────────────────
+.github/workflows/distribute-pr.yml ──→    distribute-pr.yml                  ┐
+  on: pull_request                           prepare → build-direct → publish ─┤
+                                                                               │
+distribute-beta.yml             ──→        distribute-beta.yml                 │   _build-direct.yml
+  on: pull_request closed (merged)           prepare → build-direct +      ────┼──→  (artifact: direct-build)
+                                             build-app-store → publish-beta    │
+                                             → push v<next>-beta.<N> tag       │   _build-app-store.yml
+distribute-release.yml          ──→        distribute-release.yml              ┘    (artifact: app-store-build)
+  on: push tags v*.*.*                       prepare → validate tag matches
+       (excluding v*-beta.*)                 Changelog.json → build-* →
+                                             publish-release
 ```
 
-Build callees produce **artifacts** (DMG/ZIP for direct, .pkg for App Store). Orchestrators control the publishing sequence so we can fail-safe between channels — if App Store fails, the appcast doesn't move, and no one downloads a partly-published release.
+The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Store). Orchestrators decide the publishing sequence so failure mid-channel doesn't half-publish.
 
-## Publish ordering
+## How versioning works (the single source of truth)
 
-Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencing in their publish job:
+`Config/Changelog.json` in **your app repo** is the source of truth for the next-to-ship version and the customer-facing release notes. The same file feeds the in-app "What's New" view and the appcast/release notes — one author, one place.
 
+```jsonc
+{
+  "comingNext": "Optional free-form blurb shown in your app UI",
+  "versions": [
+    {
+      "version": "2.12.0",          // ← versions[0]: in-progress / next to ship
+      "items": [
+        {"type": "feat", "title": {"en": "Show folder color from macOS 26 Tahoe"}},
+        {"type": "fix",  "title": {"en": "First NAS transfer fails on cold drive"}}
+      ]
+    },
+    {
+      "version": "2.11.0",          // ← already shipped
+      "items": [ /* ... */ ]
+    }
+  ]
+}
 ```
-1. (gate) altool → ASC          if enable-app-store
-2. aws s3 cp DMG/ZIP             (silent — no Sparkle client polls these URLs without an appcast pointer)
-3. (gate) appcast.xml update     if publish-appcast / publish-beta-appcast
-4. gh release create             ← only if 1-3 all succeeded
-```
 
-Step 1 is the App Store gate. Step 3 is the "go-live" moment for Sparkle clients. Step 4 publishes the GH Release. A failure anywhere short-circuits the rest.
+**Item types:** `feat` → New Features, `fix` → Bug Fixes, `core` → Improvements. Anything else (including legacy `chore`) is silently dropped from the customer-facing render.
 
-The release notes are fetched **before** any publishing via the GitHub API's `generate-notes` endpoint (returns Markdown without creating a Release object), then optionally enriched via Jira, then injected into appcast `<description>` CDATA, then embedded in the final `gh release create`.
+**Tags mark ship moments:**
+- `vX.Y.Z` — stable release. You push this manually when ready.
+- `vX.Y.Z-beta.N` — Nth beta of in-progress `X.Y.Z`. Auto-pushed by the beta workflow on every PR merge.
+
+**Marketing version per channel** (Apple's iTMS rejects non-`N.N.N` strings in `CFBundleShortVersionString`, so we split):
+- **Direct / Sparkle:** `<next>-beta.<N>` for betas (e.g. `2.12.0-beta.4`), bare `<next>` for releases.
+- **App Store / TestFlight:** bare `<next>` always; the build number disambiguates.
+
+**Safeguard.** If `versions[0].version` already has a corresponding `v<X.Y.Z>` tag (i.e. you shipped that version, but haven't yet prepended a new entry for the next one), the PR workflow's `prepare` step fails the PR check with an actionable error. You add a new `versions[0]` entry to your PR, the check goes green, and the merge produces the first beta of the new version. Commits and merges are never blocked by this — only the auto-publish work refuses to run against stale state.
 
 ## Per-app setup
 
+### 0. `Config/Changelog.json`
+
+Drop this file in your app repo. Empty `versions` is fine to start, but `versions[0].version` MUST be set before any CI run can produce a build. Your app code should load this file at runtime for its What's New view; CI reads the same file for release notes and version derivation.
+
 ### 1. Secrets
 
-Set in your app's repo (or inherit from org):
+Set in your app's repo (or inherit from your org):
 
 | Secret | Purpose | Required for |
 |---|---|---|
@@ -50,7 +75,7 @@ Set in your app's repo (or inherit from org):
 | `DEVELOPER_ID_PASSWORD` | Password for the Developer ID p12 | Direct |
 | `APPLE_DISTR_P12_BASE64` | Apple Distribution cert + private key — signs the .app | App Store |
 | `APPLE_DISTR_PASSWORD` | Password for the Apple Distribution p12 | App Store |
-| `MAC_DISTR_P12_BASE64` | Mac Installer Distribution cert + private key — signs the .pkg installer | App Store |
+| `MAC_DISTR_P12_BASE64` | Mac Installer Distribution cert + private key — signs the .pkg | App Store |
 | `MAC_DISTR_PASSWORD` | Password for the Mac Installer Distribution p12 | App Store |
 | `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | Both |
 | `PROV_PROF_DEVID_BASE64` | Main Developer ID provisioning profile | Direct |
@@ -58,28 +83,24 @@ Set in your app's repo (or inherit from org):
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key | Both (notarization + altool) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3 upload credentials | Direct |
 | `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key | Direct (appcast signing) |
-| `PROV_PROF_DEVID_FINDER_BASE64`, `PROV_PROF_STORE_FINDER_BASE64` | Finder extension profiles | macpacker |
-| `PROV_PROF_DEVID_QL_BASE64`, `PROV_PROF_STORE_QL_BASE64` | Quick Look extension profiles | macpacker |
-| `JIRA_USER_EMAIL`, `JIRA_API_TOKEN` | Jira changelog enrichment (optional) | Apps that want it |
-| `SHARED_WORKFLOWS_TOKEN` | PAT (or GH App token) with read access to `LeanBytes/workflows-macos`. The default `GITHUB_TOKEN` is scoped to the *caller* repo and can't clone this private workflow repo's scripts. See "Access for private consumers" below. | All (when this repo is private) |
+| `PROV_PROF_DEVID_FINDER_BASE64`, `PROV_PROF_STORE_FINDER_BASE64` | Finder extension profiles | If `has-finder-extension: true` |
+| `PROV_PROF_DEVID_QL_BASE64`, `PROV_PROF_STORE_QL_BASE64` | Quick Look extension profiles | If `has-quicklook-extension: true` |
 
 ### 2. Vars
 
 | Var | Purpose |
 |---|---|
 | `SCHEME_NAME` | Xcode scheme for Direct build |
-| `SCHEME_NAME_STORE` | Xcode scheme for App Store build |
+| `SCHEME_NAME_STORE` | Xcode scheme for App Store build (only if you ship App Store) |
 | `BUNDLE_ID` | Main app bundle ID |
-| `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK` | Extension bundle IDs (macpacker) |
+| `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK` | Extension bundle IDs (only if extensions present) |
 | `PRODUCT_NAME` | `.app` filename without extension |
-| `S3_DISTRIBUTION_PATH` | Full S3 URI (e.g. `s3://leanbytes/flowmoose`) |
+| `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (PR comment links) |
-| `JIRA_BASE_URL` | e.g. `https://sarensw.atlassian.net` (if using Jira enrich) |
-| `JIRA_KEY_PREFIX` | Default `LB`. Override if your project uses a different prefix |
 
 ### 3. Per-app xcconfig
 
-Two app-side requirements that this workflow does NOT handle for you:
+Two app-side requirements this workflow does NOT handle for you:
 
 ```
 // Config/Release.xcconfig — required for App Store apps to skip ASC's
@@ -88,49 +109,61 @@ INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
 ```
 
 ```
-// Config/Version.xcconfig — only the placeholder for local debug builds.
+// Config/Version.xcconfig — placeholder for local debug builds only.
 // CI overrides MARKETING_VERSION via xcodebuild at archive time.
 MARKETING_VERSION = 0.0.0-dev
 ```
 
-Your `Info.plist` (auto-generated or static) must reference `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)`.
+Your `Info.plist` must reference `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)`.
 
-### 4. Drop in the three shells
+### 4. Drop in the three shell workflows
 
-Copy from `examples/per-app/`:
+Copy from [`examples/per-app/`](examples/per-app/):
 
 - `distribute-pr.yml`
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Uncomment per-app inputs as needed. The beta and release orchestrators expose four independent toggles for build/distribute control:
+Pin the `uses:` line to a tag (`@v0.3.18`), not `@main`. Uncomment per-app inputs as needed.
+
+The beta and release orchestrators expose four independent toggles for build/distribute control:
 
 | Input | Default | Effect |
 |---|---|---|
 | `build-direct` | `true` | Build the .app/DMG/ZIP via `_build-direct.yml` |
 | `build-app-store` | `false` | Build the .pkg via `_build-app-store.yml` |
 | `distribute-app-store` | `false` | altool upload to ASC. Requires `build-app-store`. |
-| `distribute-beta-appcast` (beta) | `false` | Publish to Sparkle beta channel. Requires `build-direct`. |
-| `distribute-stable-appcast` (release) | `true` | Publish to Sparkle stable channel. Requires `build-direct`. |
+| `distribute-beta-appcast` *(beta only)* | `false` | Publish to the Sparkle beta channel. Requires `build-direct`. |
+| `distribute-stable-appcast` *(release only)* | `true` | Publish to the Sparkle stable channel. Requires `build-direct`. |
 
 Per-app config (typical):
 
-| App | build-direct | build-app-store | distribute-app-store | distribute-beta-appcast (beta) | distribute-stable-appcast (release) |
+| App | build-direct | build-app-store | distribute-app-store | distribute-beta-appcast | distribute-stable-appcast |
 |---|---|---|---|---|---|
 | FlowMoose | ✓ | — | — | ✓ | ✓ (default) |
 | filefillet | ✓ | ✓ | ✓ | — | ✓ (default) |
 | macpacker | ✓ | ✓ | ✓ | — | ✓ (default) |
 
-Plus per-app build flags: `use-tuist`, `has-finder-extension`, `has-quicklook-extension`, `extra-xcodebuild-args`. macpacker sets both `has-*-extension` flags; FlowMoose sets `use-tuist`.
+Plus per-app build flags: `use-tuist`, `has-finder-extension`, `has-quicklook-extension`, `extra-xcodebuild-args`, `changelog-path` (defaults to `Config/Changelog.json`). macpacker sets both `has-*-extension` flags; FlowMoose sets `use-tuist`.
+
+**Release trigger.** Your `distribute-release.yml` shell must exclude the auto-pushed beta tags so they don't fire the stable flow:
+
+```yaml
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - '!v*-beta.*'
+```
 
 ### 5. Pre-build hooks (app-specific assets)
 
-For apps that need extra setup on the build runner (asset downloads, codegen, etc.), the build callee exposes generic `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the caller's repo, so no app-specific paths or URLs leak into the shared workflow.
+For apps that need extra setup on the build runner (asset downloads, codegen, etc.), the build callee exposes generic `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the consumer repo, so no app-specific paths or URLs leak into the shared workflow.
 
 FlowMoose example — downloading the Whisper model from HuggingFace:
 
 ```yaml
-# In FlowMoose's distribute-pr.yml / distribute-beta.yml / distribute-release.yml shell:
+# In FlowMoose's per-app shell:
 with:
   pre-build-cache-path: FlowMoose/Models/ggml-base.bin
   pre-build-cache-key:  whisper-base-model-v1
@@ -148,19 +181,32 @@ if [ "$SIZE" -lt 100000000 ]; then
 fi
 ```
 
-The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty, which is the default for filefillet and macpacker.
+The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty.
 
-## Versioning
+## Publish ordering
 
-Pin caller `uses:` to a tag (`@v0.1`), not `@main`:
+Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencing in their publish job:
 
-```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.1
+```
+1. Render release notes from Config/Changelog.json
+2. (gate) altool → ASC          if distribute-app-store
+3. aws s3 cp DMG/ZIP             (silent — no Sparkle client polls these without an appcast pointer)
+4. (gate) appcast.xml update     if distribute-beta-appcast / distribute-stable-appcast
+5. (beta only) git push origin v<next>-beta.<N>
+6. gh release create             ← only if 1-5 all succeeded
 ```
 
-Patch versions (`v0.1.1`, `v0.1.2`, …) for bug fixes — bump the tag in your callers when you want them. Minor/major versions for breaking changes — review the changelog before bumping.
+Step 4 is the "go-live" moment for Sparkle clients. Step 6 publishes the GH Release (pre-release for betas, full release for stable). A failure anywhere short-circuits the rest, so you never end up with a half-published version.
 
-`distribute-pr.yml` (and the other orchestrators) call `_build-direct.yml` via the relative `./.github/workflows/_build-direct.yml` path, so the callee version is automatically pinned to whatever the orchestrator was called as.
+## Versioning of *this* repo
+
+Pin caller `uses:` to a tag, not `@main`:
+
+```yaml
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.18
+```
+
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the working unit — every workflow change ships under a new patch tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 
@@ -173,37 +219,34 @@ Patch versions (`v0.1.1`, `v0.1.2`, …) for bug fixes — bump the tag in your 
     _build-direct.yml          ← internal callee (workflow_call)
     _build-app-store.yml       ← internal callee (workflow_call)
   scripts/
-    version-derive.sh          ← derive version from git tags
-    release-notes-fetch.sh     ← GH auto-notes API wrapper (no Release created)
-    enrich-changelog-with-jira.sh  ← optional Jira summary substitution
-    update-appcast.sh          ← inject notes + trim appcast.xml
+    changelog-from-json.sh     ← render Markdown notes from Config/Changelog.json
+    update-appcast.sh          ← inject CDATA description + trim appcast.xml
 examples/
   per-app/
     distribute-pr.yml          ← copy to each app repo
     distribute-beta.yml
     distribute-release.yml
-workflows/                     ← reference snapshots from filefillet/flowmoose/macpacker
-                                 (will be removed once all three are migrated)
 ```
 
-## Access for private consumers
+Versioning, beta-counting, and tag validation all live **inline** in the orchestrator workflows — there's no `version-derive.sh` (deleted in v0.3.18). See the prepare-job steps in `distribute-{pr,beta,release}.yml` for the actual logic.
 
-Two distinct permissions are needed for private consumer repos:
+## If you fork this repo private
 
-**1. Permission to *call* the workflows.** Set under this repo's `Settings → Actions → General → Access`. Allow the consuming repos (or the whole `LeanBytes` org).
+The canonical repo at `LeanBytes/workflows-macos` is public; consumers don't need any extra access plumbing. If you fork it to a private repo for your own use, two extra permissions matter:
 
-**2. Permission to *clone* this repo's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only — it can't read this private repo's source, which the orchestrators need (the `actions/checkout` of `.github/scripts/`). Provide a token via the `SHARED_WORKFLOWS_TOKEN` secret on each consumer.
+1. **Permission to *call* the workflows.** Set under your private fork's `Settings → Actions → General → Access`. Allow the consuming repos (or the whole org).
+2. **Permission to *clone* the fork's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only. Provide a token via a `SHARED_WORKFLOWS_TOKEN` secret on each consumer (the orchestrators reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` and fall back automatically when the fork is public).
 
 Quickest path — fine-grained PAT:
 
 1. github.com → `Settings` → `Developer settings` → `Personal access tokens` → `Fine-grained tokens` → `Generate new token`
-2. **Resource owner**: `LeanBytes`
-3. **Repository access**: `Only select repositories` → `LeanBytes/workflows-macos`
+2. **Resource owner**: your org
+3. **Repository access**: `Only select repositories` → your fork
 4. **Permissions** → `Repository permissions` → `Contents`: **Read-only**
-5. Generate, copy
-6. `LeanBytes` org → `Settings` → `Secrets and variables` → `Actions` → `New organization secret`
-7. Name: `SHARED_WORKFLOWS_TOKEN`, value: the PAT, repository access: select the consumer repos (FlowMoose, filefillet, macpacker)
+5. Add as `SHARED_WORKFLOWS_TOKEN` org secret on the consumers.
 
-The orchestrators reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` — falls back to the default token if the secret isn't set, which works if you ever make this repo public.
+For longer-term hygiene, prefer a GitHub App: org-level, read-only `Contents` on your fork, installed on consumer repos, tokens minted at run-time via `actions/create-github-app-token`. No PAT rotation, no single-user dependency.
 
-For longer-term hygiene (no expiring PATs tied to a single user), prefer a GitHub App: create one at the org level with read-only `Contents` on this repo, install on the consumer repos, mint tokens via `actions/create-github-app-token` and pass to the checkout step. Same shape, no rotation overhead.
+## License
+
+MIT — see [LICENSE](LICENSE).
