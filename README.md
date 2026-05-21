@@ -2,6 +2,8 @@
 
 Reusable GitHub Actions workflows for macOS app distribution — Developer ID Direct (Sparkle) + App Store (TestFlight / App Store Connect). Drop them into any macOS app repo that ships either or both channels.
 
+> **Heads up — strongly opinionated.** These workflows are tailored to how Stephan Arenswald (personal) and **LeanBytes** ship macOS apps. They power **MacPacker**, **FlowMoose**, and **FileFillet** in production. The choices baked in — Developer ID + App Store driven from a single repo, Sparkle 2 with stable + beta channels, AWS S3 for direct-download hosting in `eu-central-1`, timestamp-based build numbers, `Config/Changelog.json` as the single source of truth for versioning and release notes — reflect that specific use case. If your distribution model is different, expect to patch rather than just configure.
+
 Adding a new app means: dropping a curated `Config/Changelog.json` in your repo, setting ~9 secrets + ~5 vars, and copying three thin shell workflows into `.github/workflows/`. No build/sign/notarize/upload code lives in the consumer repo.
 
 ## Architecture
@@ -30,7 +32,10 @@ The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Stor
 
 ```jsonc
 {
-  "comingNext": "Optional free-form blurb shown in your app UI",
+  "comingNext": {
+    "en": "Optional teaser shown in your app's What's New view",
+    "de": "Optionaler Teaser für die What's-New-Ansicht der App"
+  },
   "versions": [
     {
       "version": "2.12.0",          // ← versions[0]: in-progress / next to ship
@@ -46,6 +51,8 @@ The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Stor
   ]
 }
 ```
+
+`comingNext` and each `item.title` are **locale-keyed maps** (`{"en": "...", "de": "..."}`). The shared workflows currently render the `en` value into the appcast description and GH Release body; the other locales are picked up by your app's in-product What's New view directly from the same file. `comingNext` is for the app UI only — it does not appear in the appcast or GH Release notes.
 
 **Item types:** `feat` → New Features, `fix` → Bug Fixes, `core` → Improvements. Anything else (including legacy `chore`) is silently dropped from the customer-facing render.
 
