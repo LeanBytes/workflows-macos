@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.29
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.30
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -215,7 +215,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.29
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.30
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -244,7 +244,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.29
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.30
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -516,11 +516,45 @@ jobs:
             --prerelease \
             $NOTES_ARG
 
-      # The previous "Comment on merged PR" step relied on github.event.pull_request,
-      # which is no longer present now that the trigger is `push: branches: [main]`.
-      # The GH pre-release on the Releases page already serves as the user-visible
-      # signal for a new beta. Dropping the PR-comment step keeps the workflow
-      # trigger-agnostic.
+      # ── Workflow run summary ───────────────────────────────────────────────
+      # Renders at the top of the run's page in the Actions tab. Replaces the
+      # old PR-comment step (which depended on a pull_request event we no
+      # longer trigger on). Anyone with read access to the repo's Actions can
+      # grab the DMG/ZIP links from here.
+      - name: Write beta build summary
+        if: inputs.build-direct
+        shell: bash
+        env:
+          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
+          DISTRIBUTE_APP_STORE: ${{ inputs.build-app-store && inputs.distribute-app-store }}
+          DISTRIBUTE_BETA_APPCAST: ${{ inputs.build-direct && inputs.distribute-beta-appcast }}
+        run: |
+          CHANNELS=""
+          if [ "$DISTRIBUTE_BETA_APPCAST" = "true" ]; then
+            CHANNELS+="Sparkle **beta** appcast"
+          fi
+          if [ "$DISTRIBUTE_APP_STORE" = "true" ]; then
+            [ -n "$CHANNELS" ] && CHANNELS+=" + "
+            CHANNELS+="**TestFlight**"
+          fi
+          CHANNEL_LINE="Build artifacts uploaded (no appcast / TestFlight)."
+          if [ -n "$CHANNELS" ]; then
+            CHANNEL_LINE="Published to: ${CHANNELS}."
+          fi
+
+          {
+            echo "## Beta build ready ✅"
+            echo
+            echo "$CHANNEL_LINE"
+            echo
+            echo "**Version:** \`${DIRECT_MARKETING}\` · **Build:** \`${BUILD_NUMBER}\` · **Tag:** \`${BETA_TAG}\`"
+            echo
+            echo "| Artifact | Download |"
+            echo "|---|---|"
+            echo "| DMG | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg](${S3_DOWNLOAD_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg) |"
+            echo "| ZIP | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip](${S3_DOWNLOAD_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip) |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
