@@ -1,23 +1,23 @@
 # ── Per-app beta distribution shell ──────────────────────────────────────────
 # Copy into each app repo at .github/workflows/distribute-beta.yml.
-# Triggered when a PR is merged to main. The `if:` gate prevents firing on
-# closed-but-unmerged PRs.
+# Fires on every push to main — including PR merges (same-repo OR fork) and
+# direct commits. The push event is the trusted base-branch event; secrets
+# and vars are always available, regardless of whether the originating change
+# came from a fork PR. To skip a beta on a specific direct push, put
+# `[skip ci]` in the commit message (GitHub honors this natively).
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute Beta
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
 
 permissions:
-  contents: write          # for the GH pre-release
-  pull-requests: write     # for the PR comment
+  contents: write          # for the GH pre-release + the auto-pushed beta tag
 
 jobs:
   beta:
-    if: github.event.pull_request.merged == true
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.28
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.29
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes

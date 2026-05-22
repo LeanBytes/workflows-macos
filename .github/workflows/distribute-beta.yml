@@ -1,5 +1,12 @@
 # ── Beta Distribution Orchestrator ───────────────────────────────────────────
-# Called from a per-app shell triggered on pull_request: closed (merged to main).
+# Called from a per-app shell triggered on push to main. Trigger choice matters:
+# `push: branches: [main]` is a trusted, base-branch event in the consumer repo
+# regardless of whether the push originated from a same-repo PR merge, a
+# fork-PR merge, or a direct commit. GitHub passes the full set of secrets +
+# vars (unlike `pull_request: closed` from a fork, which keeps secrets stripped
+# even after the merge happens). For OSS consumers accepting fork PRs, this is
+# the only viable shape.
+#
 # Five independent toggles control what builds and what gets distributed:
 #
 #   build-direct              build the .app/DMG/ZIP   (default true)
@@ -11,24 +18,27 @@
 #   1. altool → ASC                  (if distribute-app-store)        ← GATE 1
 #   2. S3 upload of DMG/ZIP          (if build-direct; silent)
 #   3. Beta appcast update + upload  (if distribute-beta-appcast)     ← MAKES BETA VISIBLE
-#   4. GitHub pre-release creation
-#   5. PR comment with download links
+#   4. Push v<next>-beta.<N> tag
+#   5. GitHub pre-release creation
+#
+# To skip the beta on a particular push (rare — typically only for direct
+# commits that don't change shippable code), put `[skip ci]` in the commit
+# message. GitHub honors this natively.
 #
 # Per-app shell example:
 #
 #   on:
-#     pull_request:
-#       types: [closed]
+#     push:
 #       branches: [main]
 #   jobs:
 #     beta:
-#       if: github.event.pull_request.merged == true
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.29
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
 #         distribute-beta-appcast: true # FlowMoose
-#       secrets: inherit
+#       secrets:
+#         # …
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-beta
 
@@ -126,9 +136,8 @@ on:
 
 permissions:
   contents: write          # to create GH pre-release and push beta tag
-  pull-requests: write     # to comment on merged PR
 
-# Serialize beta runs across the repository so two PR merges can't race on
+# Serialize beta runs across the repository so two pushes to main can't race on
 # the beta counter (both reading "3 existing v2.12.0-beta.*" tags then both
 # trying to push v2.12.0-beta.4).
 concurrency:
@@ -206,7 +215,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.28
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.29
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -235,7 +244,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.28
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.29
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -507,54 +516,11 @@ jobs:
             --prerelease \
             $NOTES_ARG
 
-      # ── PR comment ─────────────────────────────────────────────────────────
-      - name: Comment on merged PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v8
-        env:
-          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
-          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
-          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
-          VERSION: ${{ needs.prepare.outputs.direct-marketing }}
-          BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
-          DISTRIBUTE_APP_STORE: ${{ inputs.build-app-store && inputs.distribute-app-store }}
-          DISTRIBUTE_BETA_APPCAST: ${{ inputs.build-direct && inputs.distribute-beta-appcast }}
-        with:
-          script: |
-            const label = process.env.ARTIFACT_LABEL;
-            const baseUrl = process.env.S3_DOWNLOAD_URL;
-            const productName = process.env.PRODUCT_NAME;
-            const version = process.env.VERSION;
-            const build = process.env.BUILD_NUMBER;
-            const appStore = process.env.DISTRIBUTE_APP_STORE === 'true';
-            const betaAppcast = process.env.DISTRIBUTE_BETA_APPCAST === 'true';
-
-            const channels = [];
-            if (betaAppcast) channels.push("Sparkle **beta** appcast");
-            if (appStore) channels.push("**TestFlight**");
-            const channelLine = channels.length
-              ? `Published to: ${channels.join(" + ")}.`
-              : `Build artifacts uploaded (no appcast / TestFlight).`;
-
-            const body = [
-              `**Beta build ready** ✅`,
-              ``,
-              channelLine,
-              ``,
-              `| Artifact | Link |`,
-              `|----------|------|`,
-              `| DMG | [${productName}_${label}.dmg](${baseUrl}/${productName}_${label}.dmg) |`,
-              `| ZIP | [${productName}_${label}.zip](${baseUrl}/${productName}_${label}.zip) |`,
-              ``,
-              `Version: \`${version}\` · Build: \`${build}\``,
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+      # The previous "Comment on merged PR" step relied on github.event.pull_request,
+      # which is no longer present now that the trigger is `push: branches: [main]`.
+      # The GH pre-release on the Releases page already serves as the user-visible
+      # signal for a new beta. Dropping the PR-comment step keeps the workflow
+      # trigger-agnostic.
 
       - name: Cleanup
         if: always()
