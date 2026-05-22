@@ -91,6 +91,14 @@ on:
         description: "Path to Changelog.json in the caller repo (source for appcast description + GH pre-release body)"
         type: string
         default: "Config/Changelog.json"
+      configuration-direct:
+        description: "Xcode build configuration for the Direct archive. Default 'Release'."
+        type: string
+        default: "Release"
+      configuration-app-store:
+        description: "Xcode build configuration for the App Store archive. Default 'Release'; set to e.g. 'Release Store' if your project uses a separate config for App Store builds."
+        type: string
+        default: "Release"
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
     # silently passes nothing) can pass secrets explicitly. Same-org callers
     # can keep using `secrets: inherit` — the declarations are no-ops for them.
@@ -198,7 +206,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.24
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.25
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -211,6 +219,7 @@ jobs:
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-direct }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -226,7 +235,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.24
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.25
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -236,6 +245,7 @@ jobs:
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-app-store }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}

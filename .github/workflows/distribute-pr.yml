@@ -51,6 +51,10 @@ on:
         description: "Path to Changelog.json in the caller repo (single source of truth for versioning)"
         type: string
         default: "Config/Changelog.json"
+      configuration-direct:
+        description: "Xcode build configuration for the Direct archive. Default 'Release'; set to e.g. 'Release Store' only if your project distinguishes Direct vs Store via configs (not just schemes)."
+        type: string
+        default: "Release"
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
     # silently passes nothing) can pass secrets explicitly. Same-org callers
     # can keep using `secrets: inherit` — the declarations are no-ops for them.
@@ -130,7 +134,7 @@ jobs:
 
   build-direct:
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.24
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.25
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -143,6 +147,7 @@ jobs:
       has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-direct }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}

@@ -79,6 +79,12 @@ on:
         type: boolean
         default: false
 
+      # ── Build configuration ────────────────────────────────────────────────
+      configuration:
+        description: "Xcode build configuration to archive (e.g. Release, Release Store). Must match a configuration declared in the caller's .xcodeproj."
+        type: string
+        default: "Release"
+
       # ── Escape hatch ───────────────────────────────────────────────────────
       extra-xcodebuild-args:
         description: "Additional xcodebuild settings appended to archive command (e.g. 'BUILD_RELEASE_DATE=...')"
@@ -267,7 +273,7 @@ jobs:
 
           xcodebuild archive \
             -scheme "${{ vars.SCHEME_NAME }}" \
-            -configuration Release \
+            -configuration "${{ inputs.configuration }}" \
             -archivePath /tmp/build/app.xcarchive \
             -destination "generic/platform=macOS" \
             MARKETING_VERSION=${{ inputs.version }} \

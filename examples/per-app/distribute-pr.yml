@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.24
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.25
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes
@@ -49,3 +49,7 @@ jobs:
 
       # ── Changelog.json (default: Config/Changelog.json) ─────────────────
       # changelog-path: Config/Changelog.json
+
+      # ── Build configuration override (default: "Release") ─────────────
+      # Only set this if your Direct scheme builds a non-default config.
+      # configuration-direct: Release
