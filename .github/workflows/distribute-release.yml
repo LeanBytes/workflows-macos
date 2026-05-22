@@ -184,7 +184,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.30
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.31
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -213,7 +213,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.30
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.31
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -467,6 +467,22 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             $NOTES_ARG
+
+      # ── Attach DMG + ZIP to the GH Release ────────────────────────────────
+      # Lets anyone browsing the repo's Releases tab download the build
+      # directly, in addition to the Sparkle stable channel and S3.
+      - name: Attach DMG + ZIP to GH Release
+        if: inputs.build-direct && needs.build-direct.result == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ github.ref_name }}" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            ./artifacts/direct/*.dmg \
+            ./artifacts/direct/*.zip
 
       - name: Cleanup
         if: always()

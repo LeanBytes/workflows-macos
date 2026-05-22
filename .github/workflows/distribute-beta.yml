@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.30
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.31
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -215,7 +215,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.30
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.31
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -244,7 +244,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.30
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.31
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -515,6 +515,22 @@ jobs:
             --title "Beta ${BETA_TAG#v}" \
             --prerelease \
             $NOTES_ARG
+
+      # ── Attach DMG + ZIP to the GH pre-release ────────────────────────────
+      # Lets anyone browsing the repo's Releases tab download the build
+      # directly, in addition to the appcast / S3 distribution paths.
+      - name: Attach DMG + ZIP to GH pre-release
+        if: inputs.build-direct && needs.build-direct.result == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$BETA_TAG" \
+            --repo "${{ github.repository }}" \
+            --clobber \
+            ./artifacts/direct/*.dmg \
+            ./artifacts/direct/*.zip
 
       # ── Workflow run summary ───────────────────────────────────────────────
       # Renders at the top of the run's page in the Actions tab. Replaces the
