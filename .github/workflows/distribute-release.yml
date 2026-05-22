@@ -34,7 +34,7 @@
 #         - '!v*-beta.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.34
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.35
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -145,8 +145,7 @@ on:
       SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
-  contents: write          # to create GH Release
-  pull-requests: read
+  contents: write          # to create GH Release + push tag + upload assets
 
 jobs:
   prepare:
@@ -209,7 +208,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.34
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.35
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -238,7 +237,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.34
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.35
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
