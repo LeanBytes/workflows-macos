@@ -132,9 +132,13 @@ jobs:
           echo "  Build number:                       ${BUILD_NUMBER}"
           echo "  Artifact label:                     ${ARTIFACT_LABEL}"
 
+  # ── Same-repo PR: full signed build + S3 upload + PR comment ──────────────
   build-direct:
+    # Fork PRs have GitHub's secrets-strip applied, so a signed build can't
+    # succeed. Route those to build-direct-fork below instead.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.25
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.26
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -160,7 +164,27 @@ jobs:
       ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
 
+  # ── Fork PR: compile-only check, no secrets needed ───────────────────────
+  # Validates the contributor's code compiles without signing. The prepare
+  # job already ran the Changelog.json safeguard before reaching here, so a
+  # PR that didn't update versions[0] correctly is already showing a red
+  # check from that step.
+  build-direct-fork:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    needs: prepare
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct-compile-only.yml@v0.3.26
+    with:
+      use-tuist: ${{ inputs.use-tuist }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-direct }}
+
   publish-pr:
+    # S3 upload + PR comment require secrets the fork-PR path doesn't have.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     needs: [prepare, build-direct]
     runs-on: ubuntu-latest
     timeout-minutes: 10
