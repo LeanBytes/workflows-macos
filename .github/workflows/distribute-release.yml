@@ -96,6 +96,14 @@ on:
         description: "Xcode build configuration for the App Store archive. Default 'Release'; set to e.g. 'Release Store' if your project uses a separate config for App Store builds."
         type: string
         default: "Release"
+      discussion-category:
+        description: |
+          GitHub Discussions category to auto-create a discussion in alongside
+          the release. Empty (default) = skip. Set to e.g. 'Announcements' to
+          create a discussion with the release's title. The consumer repo must
+          have Discussions enabled and have a category with this exact name.
+        type: string
+        default: ""
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
     # silently passes nothing) can pass secrets explicitly. Same-org callers
     # can keep using `secrets: inherit` — the declarations are no-ops for them.
@@ -184,7 +192,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.31
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.32
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -213,7 +221,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.31
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.32
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -453,20 +461,23 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCUSSION_CATEGORY: ${{ inputs.discussion-category }}
         run: |
           set -euo pipefail
 
-          NOTES_ARG=""
+          ARGS=(--repo "${{ github.repository }}" --title "${{ github.ref_name }}")
+
           if [ -f /tmp/notes.md ]; then
-            NOTES_ARG="--notes-file /tmp/notes.md"
+            ARGS+=(--notes-file /tmp/notes.md)
           else
-            NOTES_ARG="--notes \"Release ${ARTIFACT_LABEL}\""
+            ARGS+=(--notes "Release ${ARTIFACT_LABEL}")
           fi
 
-          gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            $NOTES_ARG
+          if [ -n "$DISCUSSION_CATEGORY" ]; then
+            ARGS+=(--discussion-category "$DISCUSSION_CATEGORY")
+          fi
+
+          gh release create "${{ github.ref_name }}" "${ARGS[@]}"
 
       # ── Attach DMG + ZIP to the GH Release ────────────────────────────────
       # Lets anyone browsing the repo's Releases tab download the build
