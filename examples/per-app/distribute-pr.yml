@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.33
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.34
     with:
       # ── Scheme name (literal, required for fork-PR support) ────────────
       # GitHub strips `vars.*` from fork-PR workflow runs, so a vars-based

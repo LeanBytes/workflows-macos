@@ -1,34 +1,49 @@
 # ── Release Distribution Orchestrator ────────────────────────────────────────
-# Called from a per-app shell triggered on tag push (push: tags: ['v*.*.*']).
-# Crucially: GH Release object is created LAST, so a failed build never leaves
-# a dangling release on the tag.
+# Called from a per-app shell triggered on tag push (vX.Y or vX.Y.Z, with
+# v*-beta.* excluded). The pushed tag's version must match versions[0].version
+# in Config/Changelog.json — validated in the prepare job; mismatch fails fast
+# before any build work.
 #
-# Five independent toggles control what builds and what gets distributed:
+# Strict fail-safe publish order — the GH Release object is created LAST, so a
+# failed build never leaves a dangling release on the tag:
 #
+#   1. Read release notes from Config/Changelog.json
+#   2. altool → ASC                  (if distribute-app-store)         ← GATE 1
+#   3. S3 upload of DMG/ZIP          (if build-direct; silent)
+#   4. Stable appcast update + upload (if distribute-stable-appcast)   ← MAKES STABLE VISIBLE
+#   5. gh release create                                                ← visible
+#   6. gh release upload (DMG + ZIP)  attach assets to the release object
+#
+# Toggles:
 #   build-direct                build the .app/DMG/ZIP   (default true)
 #   build-app-store             build the .pkg            (default false)
 #   distribute-app-store        altool → ASC              (default false; needs build-app-store)
 #   distribute-stable-appcast   Sparkle stable channel    (default true; needs build-direct)
 #
-# Strict fail-safe publish order:
-#   1. Fetch GH auto-notes           (no Release object created yet)
-#   2. altool → ASC                  (if distribute-app-store)         ← GATE 1
-#   3. S3 upload of DMG/ZIP          (if build-direct; silent)
-#   4. Stable appcast update + upload (if distribute-stable-appcast)   ← MAKES STABLE VISIBLE
-#   5. GitHub Release creation                                          ← LAST
+# Optional inputs of note (see the inputs block for the full list):
+#   configuration-direct        Xcode config for the Direct archive    (default "Release")
+#   configuration-app-store     Xcode config for the App Store archive (default "Release")
+#   discussion-category         GH Discussions category for auto-created discussion (default: skip)
 #
-# Per-app shell example:
+# Per-app shell example (drop into your repo at .github/workflows/distribute-release.yml):
 #
 #   on:
 #     push:
-#       tags: ['v*.*.*']
+#       tags:
+#         - 'v*'
+#         - '!v*-beta.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.34
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
-#       secrets: inherit
+#       secrets:
+#         # Pass each secret explicitly. `secrets: inherit` does not pass
+#         # secrets across org boundaries (e.g. sarensw/macpacker calling
+#         # LeanBytes/workflows-macos), so the explicit form is universal.
+#         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+#         # … see examples/per-app/distribute-release.yml for the full list.
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-release
 
@@ -156,8 +171,10 @@ jobs:
           set -euo pipefail
 
           TAG="${{ github.ref_name }}"
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Tag '$TAG' is not a bare semver release tag (expected vX.Y.Z)."
+          # Accept 2-part (vX.Y) or 3-part (vX.Y.Z) semver. Apple's
+          # CFBundleShortVersionString spec allows either.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a bare semver release tag (expected vX.Y or vX.Y.Z)."
             exit 1
           fi
           TAG_VERSION="${TAG#v}"
@@ -192,7 +209,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.33
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.34
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -221,7 +238,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.33
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.34
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
