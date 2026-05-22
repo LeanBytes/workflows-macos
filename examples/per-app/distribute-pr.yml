@@ -15,8 +15,15 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.27
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.28
     with:
+      # ── Scheme name (literal, required for fork-PR support) ────────────
+      # GitHub strips `vars.*` from fork-PR workflow runs, so a vars-based
+      # scheme name would resolve to empty. Hardcode here as a literal
+      # string. Same-repo-only consumers can omit this and the workflow
+      # falls back to `vars.SCHEME_NAME`.
+      scheme-name: MyAppScheme
+
       # ── Optional per-app inputs (uncomment what applies) ────────────────
       # use-tuist: true                # FlowMoose
       # runs-on-build: '["self-hosted","agent-alex"]'  # FlowMoose self-hosted

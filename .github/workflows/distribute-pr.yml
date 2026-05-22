@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.27
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.28
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +63,17 @@ on:
         type: string
         default: "Release"
 
+      scheme-name:
+        description: |
+          Direct scheme name to compile. Pass this explicitly when the
+          workflow can fire on fork PRs — GitHub strips `vars.*` (along
+          with secrets) from fork-PR runs, so a vars-based scheme name
+          would resolve to empty and xcodebuild would error. Same-repo
+          callers can leave this empty and the workflow falls back to
+          `vars.SCHEME_NAME`.
+        type: string
+        default: ""
+
       # Accepted for backward compatibility with the v0.3.x shell templates.
       # Extensions are part of the scheme — they compile alongside the app
       # regardless of these flags, so the PR workflow ignores them.
@@ -80,12 +91,26 @@ jobs:
   verify:
     runs-on: ${{ fromJSON(inputs.runs-on-build) }}
     timeout-minutes: 30
+    env:
+      # Prefer the explicit input; fall back to vars.SCHEME_NAME for same-repo
+      # callers. Vars are stripped on fork PRs, so OSS consumers must pass
+      # `scheme-name` as a literal in their per-app shell to support fork PRs.
+      SCHEME: ${{ inputs.scheme-name != '' && inputs.scheme-name || vars.SCHEME_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0  # safeguard needs full tag history
           submodules: true
+
+      - name: Verify scheme name is resolvable
+        shell: bash
+        run: |
+          if [ -z "$SCHEME" ]; then
+            echo "::error::No scheme name available. Pass the \`scheme-name\` input from your per-app shell as a literal (e.g. \`scheme-name: MacPacker\`), or set repository variable \`SCHEME_NAME\`. Fork PRs strip vars — only the literal input survives there."
+            exit 1
+          fi
+          echo "Using scheme: $SCHEME"
 
       # ── Safeguard: Changelog.json's versions[0] isn't already released ────
       - name: Changelog.json safeguard
@@ -137,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
-            -scheme "${{ vars.SCHEME_NAME }}" \
+            -scheme "$SCHEME" \
             -configuration "${{ inputs.configuration-direct }}"
 
       # ── Pre-build hooks (caller-provided) ──────────────────────────────────
@@ -163,7 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild build \
-            -scheme "${{ vars.SCHEME_NAME }}" \
+            -scheme "$SCHEME" \
             -configuration "${{ inputs.configuration-direct }}" \
             -destination "generic/platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
