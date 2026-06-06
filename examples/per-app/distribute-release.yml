@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.35
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.36
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes
@@ -77,8 +77,13 @@ jobs:
       # configuration-direct: Release
       # configuration-app-store: Release Store
 
-      # ── GitHub Discussions (default: no discussion created) ───────────
-      # Enable Discussions on the repo first, then set this to the
-      # category name (typically "Announcements") to auto-create a
-      # discussion with the release's title alongside each stable release.
+      # ── GitHub Discussions (off by default) ─────────────────────────────
+      # Flip create-discussion to true to auto-open a discussion with the
+      # release's title under the named category. Prerequisites:
+      #   * Discussions enabled on the repo (Settings → Features → Discussions)
+      #   * A category exists with the EXACT name you pass (case-sensitive)
+      #   * The caller shell grants `discussions: write` in its permissions
+      # If any of those is wrong, `gh release create` fails atomically and
+      # the release object is NOT created. Test in a sandbox repo first.
+      # create-discussion: true
       # discussion-category: Announcements

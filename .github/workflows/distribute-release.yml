@@ -34,7 +34,7 @@
 #         - '!v*-beta.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.35
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.36
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -111,14 +111,24 @@ on:
         description: "Xcode build configuration for the App Store archive. Default 'Release'; set to e.g. 'Release Store' if your project uses a separate config for App Store builds."
         type: string
         default: "Release"
+      create-discussion:
+        description: |
+          Whether to auto-create a GitHub Discussion alongside the release.
+          OFF by default to keep the release flow simple — the discussion
+          creation path through `gh release create --discussion-category`
+          is fragile (depends on repo Discussions being enabled, an exact
+          category-name match, and `discussions: write` token scope) and a
+          failure here will abort the entire release. Turn it on only after
+          you've validated the setup in a sandbox repo.
+        type: boolean
+        default: false
       discussion-category:
         description: |
-          GitHub Discussions category to auto-create a discussion in alongside
-          the release. Empty (default) = skip. Set to e.g. 'Announcements' to
-          create a discussion with the release's title. The consumer repo must
-          have Discussions enabled and have a category with this exact name.
+          GitHub Discussions category name to use when `create-discussion`
+          is true. Defaults to "Announcements" (GitHub's default category).
+          Ignored when `create-discussion` is false.
         type: string
-        default: ""
+        default: "Announcements"
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
     # silently passes nothing) can pass secrets explicitly. Same-org callers
     # can keep using `secrets: inherit` — the declarations are no-ops for them.
@@ -208,7 +218,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.35
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.36
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -237,7 +247,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.35
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.36
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -477,6 +487,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CREATE_DISCUSSION: ${{ inputs.create-discussion }}
           DISCUSSION_CATEGORY: ${{ inputs.discussion-category }}
         run: |
           set -euo pipefail
@@ -489,7 +500,12 @@ jobs:
             ARGS+=(--notes "Release ${ARTIFACT_LABEL}")
           fi
 
-          if [ -n "$DISCUSSION_CATEGORY" ]; then
+          # Discussion creation is opt-in. `gh release create --discussion-category`
+          # is a single atomic call: if the category lookup / discussions API errors
+          # for any reason, the WHOLE release create fails and the tag has no
+          # release object. Keep this off by default; flip on per-consumer once
+          # you've validated the Discussions setup works end-to-end.
+          if [ "$CREATE_DISCUSSION" = "true" ] && [ -n "$DISCUSSION_CATEGORY" ]; then
             ARGS+=(--discussion-category "$DISCUSSION_CATEGORY")
           fi
 

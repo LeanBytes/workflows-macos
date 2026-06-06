@@ -131,14 +131,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.35`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.36`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.35
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.36
     secrets: inherit
     with:
       # …
@@ -176,13 +176,22 @@ on:
 
 **GH (pre-)release titles.** Stable releases get `v<X.Y.Z>` as the release title (matching the tag); beta pre-releases get `v<X.Y.Z>-beta.<N>`. The DMG and ZIP are attached to the release object as downloadable assets, so the Releases tab on the repo shows them alongside GitHub's auto-attached source archives.
 
-**GitHub Discussions (optional, releases only).** Set `discussion-category: <name>` (typically `Announcements`) in `distribute-release.yml`'s shell to auto-open a discussion alongside each stable release. The discussion's title matches the release title (e.g. `v0.15`). Omit the input to opt out (default). Prerequisite: the consumer repo has **Discussions** enabled in `Settings → Features` and has a category with that exact name. Beta pre-releases don't create discussions — they'd be too noisy.
+**GitHub Discussions (off by default, releases only).** Set `create-discussion: true` in `distribute-release.yml`'s shell to auto-open a discussion alongside each stable release. The discussion's title matches the release title (e.g. `v0.15`); the category defaults to `Announcements` and can be overridden via `discussion-category: <name>`.
 
 ```yaml
 # In your per-app distribute-release.yml shell:
 with:
-  discussion-category: Announcements
+  create-discussion: true
+  # discussion-category: Announcements   # default; override only if needed
 ```
+
+**Prerequisites and caveats (test in a sandbox repo first).** The orchestrator passes `--discussion-category` to `gh release create` as a single atomic call. If the discussion API errors, the **entire release creation fails** and no release object is produced for the pushed tag. To avoid that on a real release, verify all of the following on the consumer repo before flipping the toggle on:
+
+- Discussions enabled (`Settings → Features → Discussions` ticked).
+- A category with the **exact** name you pass exists in the Discussions tab (case-sensitive).
+- The caller's per-app shell grants `discussions: write` in its `permissions:` block (in addition to `contents: write`).
+
+If any of those are wrong you'll typically see a misleading `HTTP 404: Discussion could not be created. Make sure you passed a valid category name.` — the 404 covers all three failure modes. Beta pre-releases don't create discussions either way to avoid notification noise.
 
 ### 5. Pre-build hooks (app-specific assets)
 
