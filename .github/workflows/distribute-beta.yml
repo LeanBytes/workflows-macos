@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.36
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.37
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -215,7 +215,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.36
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.37
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -240,11 +240,12 @@ jobs:
       ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.36
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.37
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}

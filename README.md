@@ -131,14 +131,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.36`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.37`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.36
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.37
     secrets: inherit
     with:
       # …
@@ -219,6 +219,40 @@ fi
 
 The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty.
 
+## Local builds (no CI)
+
+Need a signed + notarized DMG/ZIP to test a fix — without burning a commit and a CI run? `scripts/build-local.sh` runs the **exact same** pipeline `_build-direct.yml` runs (same ephemeral keychain from your base64 cert, same `xcodebuild` / `notarytool` / `ditto` commands, same Gatekeeper verification) on your Mac. The workflow and the script both call one shared core — `.github/scripts/build-direct.sh` — so they can't drift.
+
+> The notarization round-trip (~1-3 min) dominates the wall-clock; use `--skip-notarize --no-dmg` for a fast signing-only inner loop while iterating.
+
+**One-time setup:**
+
+1. `cp examples/local-build.env.example ~/.config/workflows-macos/<app>.env` and fill it from your app repo's GitHub Actions secrets + vars (the same base64 cert, ASC key, and scheme/bundle/product values CI uses). It holds a signing cert — keep it **outside any git repo** and `chmod 600` it.
+2. Make sure any pre-build asset is present locally (e.g. FlowMoose's Whisper model), or set `PRE_BUILD_SCRIPT` in the env file.
+
+**Run** (from your app repo, or pass `--project-dir`):
+
+```bash
+# from a workflows-macos checkout on disk:
+~/path/to/workflows-macos/scripts/build-local.sh --env-file ~/.config/workflows-macos/flowmoose.env
+
+# fast signing-only loop (skip notarization, ZIP only):
+~/path/to/workflows-macos/scripts/build-local.sh --env-file … --skip-notarize --no-dmg
+```
+
+Artifacts land in `<app-repo>/dist/<PRODUCT_NAME>_<version>.{zip,dmg}`, where the version defaults to `<Changelog versions[0]>-local.<build-number>` — the `-local.` marker keeps a stray local build from being mistaken for a shipped `-beta.N`/release. **Add `dist/` (and your env file, if you keep it in-repo) to your app repo's `.gitignore`.**
+
+**Verify it's a real, Gatekeeper-valid build** — the script does this automatically post-package; the manual equivalents are:
+
+```bash
+ditto -x -k dist/<PRODUCT_NAME>_*.zip /tmp/verify
+xcrun stapler validate -v /tmp/verify/<PRODUCT_NAME>.app
+spctl --assess --type execute --verbose=4 /tmp/verify/<PRODUCT_NAME>.app   # → accepted, source=Notarized Developer ID
+codesign --verify --deep --strict --verbose=4 /tmp/verify/<PRODUCT_NAME>.app
+```
+
+`scripts/build-local.sh --help` lists every flag (`--version`, `--output-dir`, `--scheme`, `--keep`, …).
+
 ## Publish ordering
 
 Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencing in their publish job:
@@ -255,9 +289,13 @@ Patch versions (`v0.3.18`, `v0.3.19`, …) are the working unit — every workfl
     _build-direct.yml          ← internal callee (workflow_call)
     _build-app-store.yml       ← internal callee (workflow_call)
   scripts/
+    build-direct.sh            ← shared Direct build core (CI + local both run this)
     changelog-from-json.sh     ← render Markdown notes from Config/Changelog.json
     update-appcast.sh          ← inject CDATA description + trim appcast.xml
+scripts/
+  build-local.sh               ← run the Direct build on your Mac (wraps build-direct.sh)
 examples/
+  local-build.env.example      ← template for build-local.sh's env file
   per-app/
     distribute-pr.yml          ← copy to each app repo
     distribute-beta.yml
@@ -271,7 +309,7 @@ Versioning, beta-counting, and tag validation all live **inline** in the orchest
 The canonical repo at `LeanBytes/workflows-macos` is public; consumers don't need any extra access plumbing. If you fork it to a private repo for your own use, two extra permissions matter:
 
 1. **Permission to *call* the workflows.** Set under your private fork's `Settings → Actions → General → Access`. Allow the consuming repos (or the whole org).
-2. **Permission to *clone* the fork's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only. Provide a token via a `SHARED_WORKFLOWS_TOKEN` secret on each consumer (the orchestrators reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` and fall back automatically when the fork is public).
+2. **Permission to *clone* the fork's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only. Provide a token via a `SHARED_WORKFLOWS_TOKEN` secret on each consumer. The orchestrators **and** `_build-direct.yml` (which now clones `build-direct.sh`) reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` — the orchestrators forward it to the build callee automatically, and everything falls back to `github.token` when the fork is public.
 
 Quickest path — fine-grained PAT:
 

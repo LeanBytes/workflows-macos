@@ -4,6 +4,13 @@
 # (distribute-pr/beta/release.yml) downloads the artifact and decides what
 # to do with it (S3, appcast, GH release).
 #
+# The actual build/sign/notarize/package logic lives in the shared script
+# `.github/scripts/build-direct.sh` (the single source of truth — also run
+# directly by `scripts/build-local.sh` for local builds). This workflow checks
+# workflows-macos out into `.shared-ci/` at the same commit (via
+# github.job_workflow_sha) and calls ONE phase of that script per named step,
+# so the Actions UI keeps its per-step names, timings, and pass/fail icons.
+#
 # Underscore prefix marks this as an internal callee — per-app shells should
 # call distribute-pr.yml / distribute-beta.yml / distribute-release.yml,
 # not this file directly.
@@ -21,6 +28,8 @@
 # Optional (gated by inputs):
 #   has-finder-extension     → PROV_PROF_DEVID_FINDER_BASE64, vars.BUNDLE_ID_FINDER
 #   has-quicklook-extension  → PROV_PROF_DEVID_QL_BASE64,     vars.BUNDLE_ID_QUICKLOOK
+#   SHARED_WORKFLOWS_TOKEN   → only when consuming a PRIVATE fork of workflows-macos
+#                              (the shared-scripts checkout falls back to github.token)
 # ─────────────────────────────────────────────────────────────────────────────
 name: _build-direct
 
@@ -106,6 +115,9 @@ on:
       ASC_KEY_ID:                     { required: true }
       ASC_ISSUER_ID:                  { required: true }
       ASC_KEY_BASE64:                 { required: true }
+      # Only needed when the originating caller consumes a PRIVATE fork of
+      # workflows-macos; the shared-scripts checkout falls back to github.token.
+      SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
   contents: read
@@ -115,41 +127,57 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
 
+    # Set once at the job level; every build-direct.sh phase reads these. The
+    # script reconstructs all paths + the profile name from this env, so each
+    # step (a separate process) needs no state from the previous one.
+    env:
+      VERSION: ${{ inputs.version }}
+      BUILD_NUMBER: ${{ inputs.build-number }}
+      ARTIFACT_LABEL: ${{ inputs.artifact-label }}
+      SCHEME_NAME: ${{ vars.SCHEME_NAME }}
+      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+      BUNDLE_ID_FINDER: ${{ vars.BUNDLE_ID_FINDER }}
+      BUNDLE_ID_QUICKLOOK: ${{ vars.BUNDLE_ID_QUICKLOOK }}
+      USE_TUIST: ${{ inputs.use-tuist }}
+      CONFIGURATION: ${{ inputs.configuration }}
+      EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
+      HAS_FINDER: ${{ inputs.has-finder-extension }}
+      HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
+      WORK_DIR: /tmp/build/_work
+      OUTPUT_DIR: /tmp/build
+      DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_DEVID_BASE64: ${{ secrets.PROV_PROF_DEVID_BASE64 }}
+      PROV_PROF_DEVID_FINDER_BASE64: ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
+      PROV_PROF_DEVID_QL_BASE64: ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: true
 
-      # ── Tuist (opt-in) ─────────────────────────────────────────────────────
-      - name: Install Tuist
-        if: inputs.use-tuist
-        shell: bash
-        run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+      # workflows-macos itself (this repo) — pinned to the SAME commit as this
+      # reusable workflow, so build-direct.sh can never skew from the YAML.
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
-      - name: Fetch Swift package dependencies (Tuist)
-        if: inputs.use-tuist
+      - name: Resolve dependencies
         shell: bash
-        run: tuist install
+        run: bash .shared-ci/.github/scripts/build-direct.sh setup
 
-      - name: Generate Xcode project (Tuist)
-        if: inputs.use-tuist
-        shell: bash
-        run: tuist generate --no-open
-
-      # ── SwiftPM (when not Tuist) ───────────────────────────────────────────
-      - name: Resolve Swift package dependencies
-        if: ${{ !inputs.use-tuist }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -resolvePackageDependencies \
-            -scheme "${{ vars.SCHEME_NAME }}" \
-            -configuration Release
-
-      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      # ── Pre-build hooks (caller-provided) — kept as native steps so
+      #    actions/cache works and the script stays app-agnostic ──
       - name: Pre-build cache
         if: inputs.pre-build-cache-path != ''
         uses: actions/cache@v5
@@ -162,279 +190,38 @@ jobs:
         shell: bash
         run: bash "${{ inputs.pre-build-script }}"
 
-      # ── Keychain ───────────────────────────────────────────────────────────
-      - name: Set up keychain
+      - name: Set up signing
         shell: bash
-        env:
-          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          set -euo pipefail
+        run: bash .shared-ci/.github/scripts/build-direct.sh signing
 
-          echo "$DEVELOPER_ID_P12_BASE64" | base64 --decode > /tmp/certificate.p12
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security import /tmp/certificate.p12 \
-            -k build.keychain \
-            -P "$DEVELOPER_ID_PASSWORD" \
-            -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" \
-            build.keychain
-          security list-keychains -d user -s build.keychain login.keychain
-
-          rm /tmp/certificate.p12
-
-      # ── Provisioning profiles ──────────────────────────────────────────────
-      - name: Install main provisioning profile
-        shell: bash
-        env:
-          DEVID_PROFILE_BASE64: ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILE_DIR"
-
-          echo "$DEVID_PROFILE_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-devid.provisionprofile"
-
-          PROFILE_NAME=$(security cms -D \
-            -i "$PROFILE_DIR/pp-devid.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
-          echo "Main profile: $PROFILE_NAME"
-
-      - name: Install Finder extension provisioning profile
-        if: inputs.has-finder-extension
-        shell: bash
-        env:
-          DEVID_PROFILE_FINDER_BASE64: ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          echo "$DEVID_PROFILE_FINDER_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-devid-finder.provisionprofile"
-
-          PROFILE_NAME_FINDER=$(security cms -D \
-            -i "$PROFILE_DIR/pp-devid-finder.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME_FINDER=$PROFILE_NAME_FINDER" >> $GITHUB_ENV
-          echo "Finder Extension profile: $PROFILE_NAME_FINDER"
-
-      - name: Install Quick Look extension provisioning profile
-        if: inputs.has-quicklook-extension
-        shell: bash
-        env:
-          DEVID_PROFILE_QUICKLOOK_BASE64: ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          echo "$DEVID_PROFILE_QUICKLOOK_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-devid-quicklook.provisionprofile"
-
-          PROFILE_NAME_QUICKLOOK=$(security cms -D \
-            -i "$PROFILE_DIR/pp-devid-quicklook.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME_QUICKLOOK=$PROFILE_NAME_QUICKLOOK" >> $GITHUB_ENV
-          echo "Quick Look Extension profile: $PROFILE_NAME_QUICKLOOK"
-
-      # ── App Store Connect API key ──────────────────────────────────────────
-      - name: Install App Store Connect API key
-        shell: bash
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_BASE64" | base64 --decode \
-            > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
-
-      # ── Verify signing identity (debug) ────────────────────────────────────
-      - name: Verify signing identity
-        shell: bash
-        run: security find-identity -v -p codesigning build.keychain
-
-      # ── Archive ────────────────────────────────────────────────────────────
       - name: Archive
         shell: bash
-        run: |
-          set -euo pipefail
+        run: bash .shared-ci/.github/scripts/build-direct.sh archive
 
-          xcodebuild archive \
-            -scheme "${{ vars.SCHEME_NAME }}" \
-            -configuration "${{ inputs.configuration }}" \
-            -archivePath /tmp/build/app.xcarchive \
-            -destination "generic/platform=macOS" \
-            MARKETING_VERSION=${{ inputs.version }} \
-            CURRENT_PROJECT_VERSION=${{ inputs.build-number }} \
-            ${{ inputs.extra-xcodebuild-args }}
-
-      # ── Export ─────────────────────────────────────────────────────────────
-      - name: Export for direct distribution
+      - name: Export
         shell: bash
-        env:
-          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
-          BUNDLE_ID_FINDER: ${{ vars.BUNDLE_ID_FINDER }}
-          BUNDLE_ID_QUICKLOOK: ${{ vars.BUNDLE_ID_QUICKLOOK }}
-          HAS_FINDER: ${{ inputs.has-finder-extension }}
-          HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
-        run: |
-          set -euo pipefail
+        run: bash .shared-ci/.github/scripts/build-direct.sh export
 
-          PROFILES_XML="<key>${BUNDLE_ID}</key><string>${PROFILE_NAME}</string>"
-
-          if [ "$HAS_FINDER" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_FINDER}</key><string>${PROFILE_NAME_FINDER}</string>"
-          fi
-
-          if [ "$HAS_QUICKLOOK" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_QUICKLOOK}</key><string>${PROFILE_NAME_QUICKLOOK}</string>"
-          fi
-
-          cat > /tmp/ExportOptions.plist << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>developer-id</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              ${PROFILES_XML}
-            </dict>
-          </dict>
-          </plist>
-          PLIST
-
-          xcodebuild -exportArchive \
-            -archivePath /tmp/build/app.xcarchive \
-            -exportPath /tmp/build/export \
-            -exportOptionsPlist /tmp/ExportOptions.plist
-
-      # ── Notarize ───────────────────────────────────────────────────────────
       - name: Notarize
         shell: bash
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
-          set -euo pipefail
+        run: bash .shared-ci/.github/scripts/build-direct.sh notarize
 
-          ditto -c -k --keepParent \
-            "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app" \
-            /tmp/build/notarize.zip
-
-          SUBMIT_OUTPUT=$(xcrun notarytool submit /tmp/build/notarize.zip \
-            --key ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
-            --key-id "$ASC_KEY_ID" \
-            --issuer "$ASC_ISSUER_ID" \
-            --wait 2>&1)
-
-          echo "$SUBMIT_OUTPUT"
-
-          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep '^\s*id:' | head -1 | sed 's/.*id: //')
-          STATUS=$(echo "$SUBMIT_OUTPUT" | grep '^\s*status:' | tail -1 | sed 's/.*status: //')
-
-          if [[ "$STATUS" != "Accepted" ]]; then
-            echo "Notarization failed with status: $STATUS — fetching rejection log"
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --key ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
-              --key-id "$ASC_KEY_ID" \
-              --issuer "$ASC_ISSUER_ID" || true
-            exit 1
-          fi
-
-          rm /tmp/build/notarize.zip
-
-      # ── Staple ─────────────────────────────────────────────────────────────
-      - name: Staple notarization ticket
+      - name: Staple
         shell: bash
-        run: |
-          set -euo pipefail
-          xcrun stapler staple "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app"
+        run: bash .shared-ci/.github/scripts/build-direct.sh staple
 
-      # ── Verify (pre-package) ───────────────────────────────────────────────
-      - name: Verify notarization, staple, and signature (pre-package)
+      - name: Verify (pre-package)
         shell: bash
-        run: |
-          set -euo pipefail
-          APP="/tmp/build/export/${{ vars.PRODUCT_NAME }}.app"
-          xcrun stapler validate -v "$APP"
-          spctl --assess --type execute --verbose=4 "$APP"
-          codesign --verify --deep --strict --verbose=4 "$APP"
+        run: bash .shared-ci/.github/scripts/build-direct.sh verify
 
-      # ── Create DMG and ZIP ─────────────────────────────────────────────────
       - name: Create DMG and ZIP
         shell: bash
-        run: |
-          set -euo pipefail
+        run: bash .shared-ci/.github/scripts/build-direct.sh package
 
-          DMG_NAME="${{ vars.PRODUCT_NAME }}_${{ inputs.artifact-label }}.dmg"
-          ZIP_NAME="${{ vars.PRODUCT_NAME }}_${{ inputs.artifact-label }}.zip"
-
-          mkdir -p /tmp/build/dmg
-          cp -R "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app" /tmp/build/dmg/
-          ln -s /Applications /tmp/build/dmg/Applications
-
-          hdiutil create \
-            -volname "${{ vars.PRODUCT_NAME }}" \
-            -srcfolder /tmp/build/dmg \
-            -ov \
-            -format UDZO \
-            "/tmp/build/${DMG_NAME}"
-
-          rm -rf /tmp/build/dmg
-
-          # --norsrc --noextattr --noacl: strip macOS-only metadata so the ZIP has
-          # no __MACOSX/._* companion entries. Archive Utility otherwise materializes
-          # those as ._* files inside Sparkle.framework/, which break the framework
-          # signature with "unsealed contents in the root directory of an embedded
-          # framework" and trigger Gatekeeper rejection on download.
-          ditto -c -k --keepParent --norsrc --noextattr --noacl \
-            "/tmp/build/export/${{ vars.PRODUCT_NAME }}.app" \
-            "/tmp/build/${ZIP_NAME}"
-
-          echo "DMG_PATH=/tmp/build/${DMG_NAME}" >> $GITHUB_ENV
-          echo "DMG_NAME=${DMG_NAME}" >> $GITHUB_ENV
-          echo "ZIP_PATH=/tmp/build/${ZIP_NAME}" >> $GITHUB_ENV
-          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
-
-      # ── Verify (post-package) ──────────────────────────────────────────────
-      # Pre-package verification can't see packaging-side breakage. Extract from
-      # each artifact and re-run Gatekeeper checks so a ZIP/DMG-only regression
-      # (e.g. __MACOSX companion files materializing inside an embedded framework)
-      # surfaces here, not in user downloads.
       - name: Verify packaged DMG and ZIP
         shell: bash
-        run: |
-          set -euo pipefail
-          APP_NAME="${{ vars.PRODUCT_NAME }}.app"
+        run: bash .shared-ci/.github/scripts/build-direct.sh verify-packages
 
-          MOUNT=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | awk 'END{print $NF}')
-          spctl --assess --type execute --verbose=4 "$MOUNT/$APP_NAME"
-          codesign --verify --deep --strict --verbose=4 "$MOUNT/$APP_NAME"
-          hdiutil detach "$MOUNT"
-
-          TMP=$(mktemp -d)
-          ditto -x -k "$ZIP_PATH" "$TMP"
-          spctl --assess --type execute --verbose=4 "$TMP/$APP_NAME"
-          codesign --verify --deep --strict --verbose=4 "$TMP/$APP_NAME"
-          rm -rf "$TMP"
-
-      # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload DMG + ZIP as workflow artifact
         uses: actions/upload-artifact@v7
         with:
@@ -445,18 +232,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # ── Cleanup ────────────────────────────────────────────────────────────
       - name: Cleanup
         if: always()
         shell: bash
-        run: |
-          set -euo pipefail
-
-          security delete-keychain build.keychain || true
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-devid.provisionprofile"
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-devid-finder.provisionprofile"
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-devid-quicklook.provisionprofile"
-          rm -rf /tmp/build
-          rm -f /tmp/ExportOptions.plist
-          rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8
-          security list-keychains -d user -s login.keychain
+        run: bash .shared-ci/.github/scripts/build-direct.sh cleanup

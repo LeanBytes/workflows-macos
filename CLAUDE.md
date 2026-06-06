@@ -44,7 +44,7 @@ The user works **step-by-step** — prove a change on the leading-edge app (Flow
 
 Internal callees (`workflow_call` only, never triggered directly; per-app shells must not call them directly either — go through the orchestrators):
 
-- **`_build-direct.yml`** — inputs: `version`, `build-number`, `artifact-label`. Does: checkout (with submodules) → resolve SwiftPM (or Tuist when `use-tuist`) → keychain + provisioning profile + ASC API key setup → `xcodebuild archive` → `xcodebuild -exportArchive` (Developer ID, manual signing) → `notarytool submit --wait` → `stapler staple` → pre-package verify → DMG + ZIP via `hdiutil` and `ditto` (the latter with `--norsrc --noextattr --noacl` to avoid `__MACOSX/._*` injection per v0.3.15) → post-package verify → upload as `direct-build` GH Actions artifact. Cleanup (deletes keychain, profiles, ASC key — `if: always()`).
+- **`_build-direct.yml`** — inputs: `version`, `build-number`, `artifact-label`. The build/sign/notarize/package logic lives in **`.github/scripts/build-direct.sh`** (the single source of truth, also run locally — see Editing patterns). The workflow checks workflows-macos out into `.shared-ci/` at `github.job_workflow_sha` and runs ONE phase of that script per named step, so the Actions UI keeps per-step names/timings/pass-fail. Phases: checkout (with submodules) → resolve SwiftPM (or Tuist when `use-tuist`) → keychain + provisioning profile + ASC API key setup → `xcodebuild archive` → `xcodebuild -exportArchive` (Developer ID, manual signing) → `notarytool submit --wait` → `stapler staple` → pre-package verify → DMG + ZIP via `hdiutil` and `ditto` (the latter with `--norsrc --noextattr --noacl` to avoid `__MACOSX/._*` injection per v0.3.15) → post-package verify → upload as `direct-build` GH Actions artifact. Cleanup (deletes keychain, profiles, ASC key; restores the keychain search list — `if: always()`).
 - **`_build-app-store.yml`** — same shape, but exports for App Store with `xcrun altool`-compatible signing, produces a `.pkg`.
 
 Orchestrators (each app's per-app shell calls one of these per trigger):
@@ -64,10 +64,11 @@ Conventions:
 
 ## Scripts in `.github/scripts/`
 
-Just two scripts now; both consume `Config/Changelog.json`:
+Three scripts. `build-direct.sh` is the Direct build core (run by both CI and `scripts/build-local.sh`); the other two consume `Config/Changelog.json`:
 
-1. **`changelog-from-json.sh`** — renders Markdown release notes for the appcast `<description>` and GH Release body. Takes `CHANGELOG_PATH` + `VERSION` (exact marketing version, or the `NEXT` sentinel for `versions[0]`). Bucketing: `feat → New Features`, `fix → Bug Fixes`, `core → Improvements`. `chore` and any unrecognized type are silently dropped.
-2. **`update-appcast.sh`** — `generate_appcast` doesn't emit `<description>`, so this script finds the matching `<item>` (by `sparkle:version` for betas — build number is the unique key — or `sparkle:shortVersionString` for stable releases) and injects a CDATA description. Then it trims to `APPCAST_MAX_ITEMS` (default 20). Trim and inject run in a single ElementTree pass; CDATA wrapping happens post-write as a text substitution so the trim doesn't dissolve the wrapper.
+1. **`build-direct.sh`** — the Developer ID Direct build core: one bash function per phase (resolve → keychain → archive → export → notarize → staple → verify → DMG/ZIP → verify → cleanup) plus a dispatcher. `build-direct.sh <phase>` for CI's per-step calls; `build-direct.sh all` for a local one-shot. Single source of truth — `_build-direct.yml` runs it phase-by-phase, `scripts/build-local.sh` runs `all` on a Mac. Env-driven with no cross-phase in-memory state — paths are re-derived each phase, and profile Names are captured pre-archive in `signing` and persisted to `WORK_DIR` for `export` (CI runs each phase as a separate process, and `xcodebuild archive` renames the profile files, so re-reading them later fails). MUST stay in lockstep with `_build-direct.yml`'s step list; the script's header banner lists the load-bearing invariants (the `ditto --norsrc --noextattr --noacl` flags, `method=developer-id`, the `spctl`/`codesign --deep --strict`/`stapler validate` set).
+2. **`changelog-from-json.sh`** — renders Markdown release notes for the appcast `<description>` and GH Release body. Takes `CHANGELOG_PATH` + `VERSION` (exact marketing version, or the `NEXT` sentinel for `versions[0]`). Bucketing: `feat → New Features`, `fix → Bug Fixes`, `core → Improvements`. `chore` and any unrecognized type are silently dropped.
+3. **`update-appcast.sh`** — `generate_appcast` doesn't emit `<description>`, so this script finds the matching `<item>` (by `sparkle:version` for betas — build number is the unique key — or `sparkle:shortVersionString` for stable releases) and injects a CDATA description. Then it trims to `APPCAST_MAX_ITEMS` (default 20). Trim and inject run in a single ElementTree pass; CDATA wrapping happens post-write as a text substitution so the trim doesn't dissolve the wrapper.
 
 Versioning, beta-counting, and tag validation are all **inline** in the orchestrator workflows now — there is no `version-derive.sh` (deleted in v0.3.18). See the prepare-job steps in `distribute-{pr,beta,release}.yml` for the actual logic.
 
@@ -93,7 +94,7 @@ The deleted Bash test suite for `version-derive.sh`, `generate-changelog.sh`, an
 
 Don't hardcode these — they're read from `secrets.*` and `vars.*` in every workflow:
 
-- **Signing**: `DEVELOPER_ID_P12_BASE64`, `CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`, `PROV_PROF_DEVID_BASE64` (+ `_FINDER_BASE64`, `_QL_BASE64` for macpacker direct; `PROV_PROF_STORE_*` for macpacker store).
+- **Signing**: `DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_PASSWORD`, `KEYCHAIN_PASSWORD`, `PROV_PROF_DEVID_BASE64` (+ `_FINDER_BASE64`, `_QL_BASE64` for macpacker direct; `PROV_PROF_STORE_*` for macpacker store).
 - **Apple**: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64`.
 - **Sparkle**: `SPARKLE_ED_PRIVATE_KEY` (EdDSA private key piped to `generate_appcast --ed-key-file -`).
 - **AWS**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (region hardcoded to `eu-central-1`).
@@ -104,5 +105,6 @@ Don't hardcode these — they're read from `secrets.*` and `vars.*` in every wor
 ## Editing patterns
 
 - **All workflow logic lives here in `workflows-macos`; per-app shells only declare triggers and inputs.** When iterating on logic, edit `_build-*.yml` / `distribute-*.yml` in this repo and bump the tag. Don't fork logic into per-app shells.
+- **The Direct build's shell logic lives in `.github/scripts/build-direct.sh`, not inline in `_build-direct.yml`** (which now just calls it one phase per step). Edit the script — it's the single source of truth and is testable on a Mac via `scripts/build-local.sh` without a commit or CI run. Keep the script and `_build-direct.yml`'s step list in lockstep (one phase ↔ one step).
 - **Move incrementally per app.** Prove a workflow change end-to-end on the leading-edge app (FlowMoose), then port the per-app shell to filefillet and macpacker. The user has explicitly asked for step-by-step — don't roll a single change across all three apps in one pass unless it's a trivially shared snippet.
 - **When bumping the shared workflow's tag, also bump the `@v<tag>` callouts inside the shared workflows AND in `examples/per-app/`.** This is the convention enforced by every v0.3.x release commit message ("Cross-callouts and example shells bumped to @v0.3.X").

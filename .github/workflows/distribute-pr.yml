@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.36
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.37
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
