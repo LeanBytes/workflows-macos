@@ -98,7 +98,7 @@ Don't hardcode these — they're read from `secrets.*` and `vars.*` in every wor
 - **Apple**: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64`.
 - **Sparkle**: `SPARKLE_ED_PRIVATE_KEY` (EdDSA private key piped to `generate_appcast --ed-key-file -`).
 - **AWS**: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (region hardcoded to `eu-central-1`).
-- **Vars**: `SCHEME_NAME`, `BUNDLE_ID`, `PRODUCT_NAME`, `S3_DISTRIBUTION_PATH`, `S3_DOWNLOAD_URL`. macpacker also has `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK`, `SCHEME_NAME_STORE`.
+- **Vars**: `SCHEME_NAME`, `BUNDLE_ID`, `PRODUCT_NAME`, `S3_DISTRIBUTION_PATH`, `S3_DOWNLOAD_URL`. macpacker also has `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK`, `SCHEME_NAME_STORE`. **Optional App Store bundle-id overrides** (added in v0.3.38; each defaults to its Direct counterpart when unset): `BUNDLE_ID_STORE`, `BUNDLE_ID_FINDER_STORE`, `BUNDLE_ID_QUICKLOOK_STORE` — set only when an app's App Store bundle id differs from its Direct one. Used solely as the `provisioningProfiles` keys in `_build-app-store.yml`'s export (the store profile must match).
 
 (Jira enrichment was removed in v0.3.17 when the notes source moved to `Config/Changelog.json`. The Jira secrets/vars on the caller repos are now dead config and can be deleted on the user's schedule.)
 

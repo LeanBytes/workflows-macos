@@ -99,8 +99,10 @@ Set in your app's repo (or inherit from your org):
 |---|---|
 | `SCHEME_NAME` | Xcode scheme for Direct build |
 | `SCHEME_NAME_STORE` | Xcode scheme for App Store build (only if you ship App Store) |
-| `BUNDLE_ID` | Main app bundle ID |
+| `BUNDLE_ID` | Main app bundle ID (Direct; also App Store when `BUNDLE_ID_STORE` is unset) |
+| `BUNDLE_ID_STORE` | App Store main bundle ID, when it differs from `BUNDLE_ID` (optional; defaults to `BUNDLE_ID`). The App Store provisioning profile must match it. |
 | `BUNDLE_ID_FINDER`, `BUNDLE_ID_QUICKLOOK` | Extension bundle IDs (only if extensions present) |
+| `BUNDLE_ID_FINDER_STORE`, `BUNDLE_ID_QUICKLOOK_STORE` | App Store extension bundle IDs, when they differ (optional; default to the non-store values) |
 | `PRODUCT_NAME` | `.app` filename without extension |
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (PR comment links) |
@@ -131,14 +133,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.37`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.38`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.37
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.38
     secrets: inherit
     with:
       # …

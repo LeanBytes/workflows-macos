@@ -21,9 +21,15 @@
 # Required caller vars:
 #   SCHEME_NAME_STORE, BUNDLE_ID, PRODUCT_NAME
 #
+# Optional vars:
+#   BUNDLE_ID_STORE          — App Store bundle id when it differs from the Direct
+#                              channel's BUNDLE_ID. Defaults to BUNDLE_ID when unset.
+#
 # Optional (gated by inputs):
 #   has-finder-extension     → PROV_PROF_STORE_FINDER_BASE64, vars.BUNDLE_ID_FINDER
+#                              (+ optional vars.BUNDLE_ID_FINDER_STORE, defaults to BUNDLE_ID_FINDER)
 #   has-quicklook-extension  → PROV_PROF_STORE_QL_BASE64,     vars.BUNDLE_ID_QUICKLOOK
+#                              (+ optional vars.BUNDLE_ID_QUICKLOOK_STORE, defaults to BUNDLE_ID_QUICKLOOK)
 # ─────────────────────────────────────────────────────────────────────────────
 name: _build-app-store
 
@@ -317,21 +323,31 @@ jobs:
         shell: bash
         env:
           BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+          BUNDLE_ID_STORE: ${{ vars.BUNDLE_ID_STORE }}
           BUNDLE_ID_FINDER: ${{ vars.BUNDLE_ID_FINDER }}
+          BUNDLE_ID_FINDER_STORE: ${{ vars.BUNDLE_ID_FINDER_STORE }}
           BUNDLE_ID_QUICKLOOK: ${{ vars.BUNDLE_ID_QUICKLOOK }}
+          BUNDLE_ID_QUICKLOOK_STORE: ${{ vars.BUNDLE_ID_QUICKLOOK_STORE }}
           HAS_FINDER: ${{ inputs.has-finder-extension }}
           HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
         run: |
           set -euo pipefail
 
-          PROFILES_XML="<key>${BUNDLE_ID}</key><string>${PROFILE_NAME}</string>"
+          # App Store bundle ids may differ from the Direct channel. Each *_STORE
+          # var is optional and falls back to its Direct counterpart, so apps that
+          # don't split keep working unchanged.
+          BUNDLE_ID_STORE="${BUNDLE_ID_STORE:-$BUNDLE_ID}"
+          BUNDLE_ID_FINDER_STORE="${BUNDLE_ID_FINDER_STORE:-$BUNDLE_ID_FINDER}"
+          BUNDLE_ID_QUICKLOOK_STORE="${BUNDLE_ID_QUICKLOOK_STORE:-$BUNDLE_ID_QUICKLOOK}"
+
+          PROFILES_XML="<key>${BUNDLE_ID_STORE}</key><string>${PROFILE_NAME}</string>"
 
           if [ "$HAS_FINDER" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_FINDER}</key><string>${PROFILE_NAME_FINDER}</string>"
+            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_FINDER_STORE}</key><string>${PROFILE_NAME_FINDER}</string>"
           fi
 
           if [ "$HAS_QUICKLOOK" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_QUICKLOOK}</key><string>${PROFILE_NAME_QUICKLOOK}</string>"
+            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_QUICKLOOK_STORE}</key><string>${PROFILE_NAME_QUICKLOOK}</string>"
           fi
 
           cat > /tmp/ExportOptions.plist << PLIST
