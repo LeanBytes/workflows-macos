@@ -7,3 +7,7 @@ tmp/
 # Local Developer ID builds (scripts/build-local.sh)
 dist/
 *.env
+
+# Python bytecode (from running the .github/scripts/*.py locally)
+__pycache__/
+*.pyc

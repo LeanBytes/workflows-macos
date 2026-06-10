@@ -1,0 +1,68 @@
+# ── Per-app nightly memory-leak watch shell ──────────────────────────────────
+# Copy into the app repo at .github/workflows/nightly-memory-watch.yml.
+# Builds the app UNSIGNED, runs it for hours, and watches its resident memory
+# for leaks. The schedule lives HERE — the shared workflow is trigger-agnostic.
+#
+# A detected leak is a SUCCESSFUL run (it files a ticket if configured). The job
+# only fails on an infra/watch error (build failed, app wouldn't launch, the
+# watcher crashed). Multi-hour watches need a self-hosted runner — GitHub-hosted
+# macOS caps a job at 6h.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Nightly Memory Watch
+
+on:
+  schedule:
+    # 23:00 UTC. GH cron is fixed UTC (not DST-aware). The shared workflow's
+    # per-commit gate means it only does real work when main has a new commit.
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      duration-minutes:
+        description: "How long to run the app and sample memory (minutes)."
+        default: "270"
+      force:
+        description: "Run even if this commit was already watched (for smoke-testing)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  memory-watch:
+    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.3.40
+    secrets:
+      # Only needed when file-jira-on-leak: true (a leak files a Jira ticket).
+      JIRA_API_TOKEN:         ${{ secrets.JIRA_API_TOKEN }}
+      # Only when consuming a PRIVATE fork of workflows-macos.
+      # SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+    with:
+      # ── What to build/run ───────────────────────────────────────────────
+      # scheme: MyApp                 # defaults to the SCHEME_NAME repo var
+      # app-name: MyApp               # the .app + process name; defaults to PRODUCT_NAME
+      # process-name: MyApp           # only if the process differs from app-name
+      use-tuist: true                 # TailBeat / FlowMoose (Tuist projects)
+      # configuration: Release
+      # extra-xcodebuild-args: ""
+
+      # ── Runner (multi-hour watch → self-hosted) ─────────────────────────
+      runs-on: '["self-hosted","macOS"]'
+      # job-timeout-minutes: 360      # must exceed duration-minutes + build time
+
+      # ── Pre-build hooks (e.g. a model download) ─────────────────────────
+      # pre-build-cache-path: Models/asset.bin
+      # pre-build-cache-key: asset-v1
+      # pre-build-script: .ci/download-asset.sh
+
+      # ── Watch thresholds (defaults shown) ───────────────────────────────
+      duration-minutes: ${{ github.event.inputs.duration-minutes || '270' }}
+      # interval-seconds: "300"
+      # warmup-seconds: "900"
+      # hard-cap-mb: "2048"
+      # slope-mb-per-hour: "150"
+      # min-growth-mb: "400"
+
+      # ── Behaviour ───────────────────────────────────────────────────────
+      file-jira-on-leak: true         # needs JIRA_BASE_URL/PROJECT_KEY/USER_EMAIL[/ISSUE_TYPE] vars + JIRA_API_TOKEN secret
+      # gate-on-new-commit: true      # false = run every night regardless of new commits
+      force: ${{ github.event.inputs.force == 'true' }}

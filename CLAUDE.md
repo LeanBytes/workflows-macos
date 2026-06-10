@@ -53,6 +53,10 @@ Orchestrators (each app's per-app shell calls one of these per trigger):
 - **`distribute-beta.yml`** — fired by the caller's shell on `pull_request: closed` + `merged == true`. `prepare` reads Changelog.json, repeats the safeguard, counts existing `v<next>-beta.*` tags, picks the next number. Two channel-specific marketing versions are computed: direct = `<next>-beta.<N>`, App Store = `<next>` (Apple rejects suffixes). Builds, uploads, updates the Sparkle beta channel (when enabled), pushes `v<next>-beta.<N>` tag, creates a GH pre-release. A repo-level `concurrency` group serializes runs so the beta counter never races.
 - **`distribute-release.yml`** — fired by the caller's shell on `push: tags: ['v*.*.*']` (with `!v*-beta.*` exclusion to ignore auto-pushed beta tags). `prepare` validates the pushed tag matches `Config/Changelog.json` `versions[0].version` and fails loudly on mismatch. Marketing version = the bare semver from the tag for both direct and App Store. Builds, uploads, updates the stable appcast, creates the GH Release last (strict fail-safe order).
 
+Standalone reusable (not a release flow):
+
+- **`memory-watch.yml`** — `workflow_call` that builds an app **unsigned**, runs it for hours, and samples RSS for leaks via `memory_watch.py`. A detected leak is a **successful** run (files a Jira ticket when `file-jira-on-leak`); only an infra/watch error (build/launch/watcher failure) fails the job. The per-app shell owns the cron; a per-commit cache gate watches each `main` commit once. First used by TailBeat.
+
 Conventions:
 
 - **Build number** is `date -u +%y%m%d%H%M%S` — UTC timestamp, strictly monotonic, used as `CFBundleVersion` / `CURRENT_PROJECT_VERSION`. Every build path uses this.
@@ -64,11 +68,13 @@ Conventions:
 
 ## Scripts in `.github/scripts/`
 
-Three scripts. `build-direct.sh` is the Direct build core (run by both CI and `scripts/build-local.sh`); the other two consume `Config/Changelog.json`:
+Five scripts. `build-direct.sh` is the Direct build core (run by both CI and `scripts/build-local.sh`); two consume `Config/Changelog.json`; and the two Python scripts back the standalone `memory-watch.yml` workflow:
 
 1. **`build-direct.sh`** — the Developer ID Direct build core: one bash function per phase (resolve → keychain → archive → export → notarize → staple → verify → DMG/ZIP → verify → cleanup) plus a dispatcher. `build-direct.sh <phase>` for CI's per-step calls; `build-direct.sh all` for a local one-shot. Single source of truth — `_build-direct.yml` runs it phase-by-phase, `scripts/build-local.sh` runs `all` on a Mac. Env-driven with no cross-phase in-memory state — paths are re-derived each phase, and profile Names are captured pre-archive in `signing` and persisted to `WORK_DIR` for `export` (CI runs each phase as a separate process, and `xcodebuild archive` renames the profile files, so re-reading them later fails). MUST stay in lockstep with `_build-direct.yml`'s step list; the script's header banner lists the load-bearing invariants (the `ditto --norsrc --noextattr --noacl` flags, `method=developer-id`, the `spctl`/`codesign --deep --strict`/`stapler validate` set).
 2. **`changelog-from-json.sh`** — renders Markdown release notes for the appcast `<description>` and GH Release body. Takes `CHANGELOG_PATH` + `VERSION` (exact marketing version, or the `NEXT` sentinel for `versions[0]`). Bucketing: `feat → New Features`, `fix → Bug Fixes`, `core → Improvements`. `chore` and any unrecognized type are silently dropped.
 3. **`update-appcast.sh`** — `generate_appcast` doesn't emit `<description>`, so this script finds the matching `<item>` (by `sparkle:version` for betas — build number is the unique key — or `sparkle:shortVersionString` for stable releases) and injects a CDATA description. Then it trims to `APPCAST_MAX_ITEMS` (default 20). Trim and inject run in a single ElementTree pass; CDATA wrapping happens post-write as a text substitution so the trim doesn't dissolve the wrapper.
+4. **`memory_watch.py`** — samples a running app's RSS (via `ps`) at intervals, applies a hard cap + a post-warmup slope-and-floor trend rule, and exits `0` healthy / `2` leak / `3` error (argparse/crash forced to 3 so it never masquerades as a leak). Pure stdlib. Backs `memory-watch.yml`, not the release flow.
+5. **`create_jira_ticket.py`** — files a Jira issue (REST v2, Basic auth, plain-string description) from a `memory_watch.py` report when a leak is found. App name + metrics come from the report, so it's app-agnostic; has `--dry-run`.
 
 Versioning, beta-counting, and tag validation are all **inline** in the orchestrator workflows now — there is no `version-derive.sh` (deleted in v0.3.18). See the prepare-job steps in `distribute-{pr,beta,release}.yml` for the actual logic.
 

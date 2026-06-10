@@ -133,14 +133,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.39`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.40`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.39
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.40
     secrets: inherit
     with:
       # …
@@ -271,6 +271,17 @@ Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencin
 
 Step 4 is the "go-live" moment for Sparkle clients. Step 6 publishes the GH Release (pre-release for betas, full release for stable). A failure anywhere short-circuits the rest, so you never end up with a half-published version.
 
+## Memory-leak watch
+
+A reusable workflow ([`memory-watch.yml`](.github/workflows/memory-watch.yml)) that builds an app **unsigned**, runs it for hours on a runner, and samples its resident memory to catch leaks (unbounded growth). It reuses this repo's build knowledge — Tuist install/generate, runner selection, the `.shared-ci` script sharing — so a calling app sets only a few inputs; no signing, no release machinery.
+
+Outcome semantics are deliberate — **a leak is a successful watch**:
+- healthy → job success
+- leak detected → file a Jira ticket (when `file-jira-on-leak`) → job **success**
+- infra/watch error (build failed, app wouldn't launch, the watcher crashed) → job **fail**
+
+`memory_watch.py` samples RSS via `ps`, applies a hard cap plus a slope-and-floor trend rule after a warmup window, and exits `0` (healthy) / `2` (leak) / `3` (error). Drop in the [`examples/per-app/nightly-memory-watch.yml`](examples/per-app/nightly-memory-watch.yml) shell (it owns the cron), point `runs-on` at a runner (**multi-hour watches need self-hosted** — GitHub-hosted macOS caps a job at 6h), and optionally wire Jira (`JIRA_*` vars + `JIRA_API_TOKEN`). A per-commit cache gate watches each commit on `main` exactly once.
+
 ## Versioning of *this* repo
 
 Pin caller `uses:` to a tag, not `@main`:
@@ -291,10 +302,13 @@ Patch versions (`v0.3.18`, `v0.3.19`, …) are the working unit — every workfl
     distribute-release.yml     ← orchestrator (workflow_call)
     _build-direct.yml          ← internal callee (workflow_call)
     _build-app-store.yml       ← internal callee (workflow_call)
+    memory-watch.yml           ← reusable memory-leak watch (workflow_call)
   scripts/
     build-direct.sh            ← shared Direct build core (CI + local both run this)
     changelog-from-json.sh     ← render Markdown notes from Config/Changelog.json
     update-appcast.sh          ← inject CDATA description + trim appcast.xml
+    memory_watch.py            ← sample RSS + leak verdict (exit 0/2/3)
+    create_jira_ticket.py      ← file a Jira issue on a detected leak
 scripts/
   build-local.sh               ← run the Direct build on your Mac (wraps build-direct.sh)
 examples/
@@ -303,6 +317,7 @@ examples/
     distribute-pr.yml          ← copy to each app repo
     distribute-beta.yml
     distribute-release.yml
+    nightly-memory-watch.yml   ← memory-watch caller shell
 ```
 
 Versioning, beta-counting, and tag validation all live **inline** in the orchestrator workflows — there's no `version-derive.sh` (deleted in v0.3.18). See the prepare-job steps in `distribute-{pr,beta,release}.yml` for the actual logic.
