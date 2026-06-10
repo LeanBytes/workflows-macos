@@ -133,14 +133,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.38`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.39`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.38
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.39
     secrets: inherit
     with:
       # …
@@ -263,9 +263,10 @@ Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencin
 1. Render release notes from Config/Changelog.json
 2. (gate) altool → ASC          if distribute-app-store
 3. aws s3 cp DMG/ZIP             (silent — no Sparkle client polls these without an appcast pointer)
-4. (gate) appcast.xml update     if distribute-beta-appcast / distribute-stable-appcast
-5. (beta only) git push origin v<next>-beta.<N>
-6. gh release create             ← only if 1-5 all succeeded
+4. (release only) aws s3 cp Config/Changelog.json   (the website reads it to find the latest released version)
+5. (gate) appcast.xml update     if distribute-beta-appcast / distribute-stable-appcast
+6. (beta only) git push origin v<next>-beta.<N>
+7. gh release create             ← only if all prior steps succeeded
 ```
 
 Step 4 is the "go-live" moment for Sparkle clients. Step 6 publishes the GH Release (pre-release for betas, full release for stable). A failure anywhere short-circuits the rest, so you never end up with a half-published version.
