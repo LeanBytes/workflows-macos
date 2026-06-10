@@ -17,7 +17,7 @@ on:
     - cron: "0 23 * * *"
   workflow_dispatch:
     inputs:
-      duration-minutes:
+      duration_minutes:
         description: "How long to run the app and sample memory (minutes)."
         default: "270"
       force:
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   memory-watch:
-    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.3.40
+    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.3.41
     secrets:
       # Only needed when file-jira-on-leak: true (a leak files a Jira ticket).
       JIRA_API_TOKEN:         ${{ secrets.JIRA_API_TOKEN }}
@@ -47,15 +47,17 @@ jobs:
 
       # ── Runner (multi-hour watch → self-hosted) ─────────────────────────
       runs-on: '["self-hosted","macOS"]'
-      # job-timeout-minutes: 360      # must exceed duration-minutes + build time
 
       # ── Pre-build hooks (e.g. a model download) ─────────────────────────
       # pre-build-cache-path: Models/asset.bin
       # pre-build-cache-key: asset-v1
       # pre-build-script: .ci/download-asset.sh
 
-      # ── Watch thresholds (defaults shown) ───────────────────────────────
-      duration-minutes: ${{ github.event.inputs.duration-minutes || '270' }}
+      # ── Duration in MINUTES (the one knob you usually tune) ─────────────
+      duration-minutes: ${{ github.event.inputs.duration_minutes || '270' }}
+      # CI hard ceiling for the whole job — auto-sized to duration + 60 min of
+      # build headroom, so the timeout always outlasts the watch.
+      job-timeout-minutes: ${{ fromJSON(github.event.inputs.duration_minutes || '270') + 60 }}
       # interval-seconds: "300"
       # warmup-seconds: "900"
       # hard-cap-mb: "2048"
