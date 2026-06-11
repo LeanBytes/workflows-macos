@@ -1,0 +1,48 @@
+# ── Per-app nightly tests shell ──────────────────────────────────────────────
+# Copy into the app repo at .github/workflows/nightly-tests.yml.
+# Builds the app UNSIGNED and runs its Swift tests nightly; on failure files a
+# Jira ticket into the active sprint. The schedule lives HERE — the shared
+# workflow is trigger-agnostic. A per-commit gate tests each main commit once.
+#
+# Requires (for the ticket): repo vars JIRA_BASE_URL / JIRA_PROJECT_KEY /
+# JIRA_USER_EMAIL (+ optional JIRA_ISSUE_TYPE, JIRA_BOARD_ID) and secret JIRA_API_TOKEN.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Nightly Tests
+
+on:
+  schedule:
+    - cron: "0 22 * * *"   # 22:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if this commit was already tested (for smoke-testing)."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.42
+    secrets:
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      # SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}   # private fork only
+    with:
+      test-runner: both                 # swift (core package) + xcodebuild (app/UI scheme)
+      # test-scheme: MyApp              # defaults to the SCHEME_NAME repo var
+      # app-name: MyApp                 # defaults to PRODUCT_NAME; used in the report/ticket
+      use-tuist: true                   # TailBeat / FlowMoose
+      # configuration: Release
+      # runs-on: '"macos-26"'           # hosted is fine for tests; override for self-hosted
+      swift-package-path: Core          # the core internal Swift package (Package.swift dir)
+      # swift-test-filter: ""
+      coverage-min: ""                  # e.g. "70" → fail the run below 70% line coverage
+      # test-plan: ""                   # an .xctestplan name, if you use one
+      # ── Pre-build hooks (e.g. a model download) ──
+      # pre-build-cache-path: Models/asset.bin
+      # pre-build-cache-key: asset-v1
+      # pre-build-script: .ci/download-asset.sh
+      file-jira-on-failure: true        # a failing test files a ticket; the job goes red
+      gate-on-new-commit: true          # test each commit on main once
+      force: ${{ github.event.inputs.force == 'true' }}

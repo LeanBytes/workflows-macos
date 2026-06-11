@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   beta:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.41
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.42
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes
@@ -42,6 +42,7 @@ jobs:
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}          # only if distribute-beta-appcast: true
+      # JIRA_API_TOKEN:                 ${{ secrets.JIRA_API_TOKEN }}                  # only if run-tests: true (files a ticket on failure)
       # SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}          # only if you fork workflows-macos private
     with:
       # ── Build toggles (default: build-direct=true, build-app-store=false) ─
@@ -76,3 +77,13 @@ jobs:
       # (e.g. "Release" for Direct + "Release Store" for App Store).
       # configuration-direct: Release
       # configuration-app-store: Release Store
+
+      # ── Tests as a gate (opt-in) — failing tests block the beta + file a ticket ──
+      # Needs JIRA_* repo vars + the JIRA_API_TOKEN secret (uncomment it above).
+      # run-tests: true
+      # test-runner: both              # xcodebuild | swift | both
+      # test-scheme: MyAppScheme       # defaults to SCHEME_NAME
+      # swift-package-path: Core       # the core internal Swift package (Package.swift dir)
+      # coverage-min: "70"             # fail below 70% swift line coverage
+      # test-plan: ""                  # an .xctestplan name, if you use one
+      # xcodebuild-test-args: ""

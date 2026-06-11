@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.41
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.42
     with:
       # ── Scheme name (literal, required for fork-PR support) ────────────
       # GitHub strips `vars.*` from fork-PR workflow runs, so a vars-based
@@ -40,3 +40,15 @@ jobs:
 
       # ── Build configuration override (default: "Release") ─────────────
       # configuration-direct: Release
+
+      # ── Tests on PR (opt-in; failure = red check, no Jira ticket) ──────
+      # Replaces the compile-only check with a build + test run.
+      # run-tests: true
+      # test-runner: both              # xcodebuild | swift | both
+      # test-scheme: MyAppScheme       # defaults to scheme-name
+      # swift-package-path: Core       # the core internal Swift package (Package.swift dir)
+      # coverage-min: "70"             # fail below 70% swift line coverage
+      # test-plan: ""                  # an .xctestplan name, if you use one
+      # xcodebuild-test-args: ""
+    # secrets:                          # only when consuming a PRIVATE fork of workflows-macos
+    #   SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}

@@ -133,14 +133,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.41`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.42`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.41
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.42
     secrets: inherit
     with:
       # …
@@ -282,6 +282,21 @@ Outcome semantics are deliberate — **a leak is a successful watch**:
 
 `memory_watch.py` samples RSS via `ps`, applies a hard cap plus a slope-and-floor trend rule after a warmup window, and exits `0` (healthy) / `2` (leak) / `3` (error). Drop in the [`examples/per-app/nightly-memory-watch.yml`](examples/per-app/nightly-memory-watch.yml) shell (it owns the cron), point `runs-on` at a runner (**multi-hour watches need self-hosted** — GitHub-hosted macOS caps a job at 6h), and optionally wire Jira (`JIRA_*` vars + `JIRA_API_TOKEN`). A per-commit cache gate watches each commit on `main` exactly once.
 
+## Testing
+
+Run an app's Swift tests at three points — all **opt-in** per app via `run-tests`. The logic is one reusable workflow ([`_test.yml`](.github/workflows/_test.yml)) wrapping one shared script ([`run-tests.sh`](.github/scripts/run-tests.sh)):
+
+- **On PRs** (`distribute-pr.yml`, `run-tests: true`) — a build + test run replaces the compile-only check; a failure turns the PR check **red** (no ticket — the author fixes before merge).
+- **On merge → beta** (`distribute-beta.yml`, `run-tests: true`) — tests **gate** the beta: if they fail, the build/publish jobs skip (**no beta is published**), the workflow fails, and a Jira ticket is filed.
+- **Nightly** — drop in [`examples/per-app/nightly-tests.yml`](examples/per-app/nightly-tests.yml) (it owns the cron, with a per-commit gate); a failure files a ticket.
+
+**Two runners**, via `test-runner: xcodebuild | swift | both`:
+- `swift` — the **core internal Swift package** (`swift-package-path`): `swift test --enable-code-coverage`, with an optional `coverage-min` gate. This is where coverage is reported.
+- `xcodebuild` — the **app/UI scheme** (`test-scheme`): unsigned `xcodebuild test` (XCTest + Swift Testing, app-hosted / UI).
+- `both` runs both; a failure in **either** fails the run.
+
+Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/fail + coverage %, no download); the `.xcresult` / coverage / `test-report.json` are uploaded as an artifact for deep dives. Failure tickets (beta + nightly) are filed into the board's **current active sprint** — needs `JIRA_*` vars + the `JIRA_API_TOKEN` secret (optional `JIRA_BOARD_ID`).
+
 ## Versioning of *this* repo
 
 Pin caller `uses:` to a tag, not `@main`:
@@ -303,12 +318,16 @@ Patch versions (`v0.3.18`, `v0.3.19`, …) are the working unit — every workfl
     _build-direct.yml          ← internal callee (workflow_call)
     _build-app-store.yml       ← internal callee (workflow_call)
     memory-watch.yml           ← reusable memory-leak watch (workflow_call)
+    _test.yml                  ← reusable test runner (workflow_call)
   scripts/
     build-direct.sh            ← shared Direct build core (CI + local both run this)
     changelog-from-json.sh     ← render Markdown notes from Config/Changelog.json
     update-appcast.sh          ← inject CDATA description + trim appcast.xml
+    run-tests.sh               ← swift test / xcodebuild test core (+ coverage)
     memory_watch.py            ← sample RSS + leak verdict (exit 0/2/3)
+    jira_client.py             ← shared Jira create + active-sprint placement
     create_jira_ticket.py      ← file a Jira issue on a detected leak
+    create_test_ticket.py      ← file a Jira issue on a test failure
 scripts/
   build-local.sh               ← run the Direct build on your Mac (wraps build-direct.sh)
 examples/

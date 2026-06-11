@@ -1,0 +1,253 @@
+# ── Test runner (reusable) ───────────────────────────────────────────────────
+# Runs an app's Swift tests UNSIGNED and reports pass/fail + coverage. Called by
+# distribute-pr.yml (red check on PRs), distribute-beta.yml (a gate before the
+# beta is published), and a per-app nightly shell. The test logic lives in the
+# shared `.github/scripts/run-tests.sh`; this workflow checks workflows-macos out
+# into `.shared-ci/` (same commit, via github.job_workflow_sha) and runs it.
+#
+# Two runners via `test-runner` (xcodebuild | swift | both): `swift` covers the
+# core internal Swift package with code coverage; `xcodebuild` covers the app/UI
+# scheme. Results render on the run page via $GITHUB_STEP_SUMMARY; the .xcresult /
+# coverage / test-report.json are uploaded as an artifact for deep dives.
+#
+# Semantics: a failing test (or a coverage-gate miss, or an infra error) → job
+# FAILS. On failure, optionally file a Jira ticket (into the active sprint).
+#
+# Required caller vars (for the xcodebuild runner): SCHEME_NAME (or input test-scheme).
+# Optional vars (only when file-jira-on-failure): JIRA_BASE_URL, JIRA_PROJECT_KEY,
+#   JIRA_USER_EMAIL, JIRA_ISSUE_TYPE, JIRA_BOARD_ID.
+# Optional secrets: JIRA_API_TOKEN (when file-jira-on-failure), SHARED_WORKFLOWS_TOKEN
+#   (when consuming a PRIVATE fork of workflows-macos).
+# ─────────────────────────────────────────────────────────────────────────────
+name: _test
+
+on:
+  workflow_call:
+    inputs:
+      test-runner:
+        description: "Which runner(s): xcodebuild | swift | both."
+        type: string
+        default: "xcodebuild"
+      runs-on:
+        description: "JSON-encoded runner. Tests are fast — hosted macos-26 is fine."
+        type: string
+        default: '"macos-26"'
+      job-timeout-minutes:
+        type: number
+        default: 60
+
+      # ── xcodebuild runner (the app/UI scheme) ──────────────────────────────
+      test-scheme:
+        description: "Scheme to test. Defaults to the SCHEME_NAME repo var."
+        type: string
+        default: ""
+      test-plan:
+        description: "Optional .xctestplan name."
+        type: string
+        default: ""
+      configuration:
+        type: string
+        default: "Release"
+      use-tuist:
+        type: boolean
+        default: false
+      xcodebuild-test-args:
+        description: "Extra xcodebuild settings (word-split)."
+        type: string
+        default: ""
+      app-name:
+        description: "App name for the report/ticket. Defaults to the PRODUCT_NAME repo var, else the scheme."
+        type: string
+        default: ""
+
+      # ── swift runner (the core package) ────────────────────────────────────
+      swift-package-path:
+        description: "Path to the Package.swift directory for `swift test`."
+        type: string
+        default: "."
+      swift-test-filter:
+        type: string
+        default: ""
+      coverage-min:
+        description: "Minimum swift line coverage %% (e.g. '70'). Empty = report only, no gate."
+        type: string
+        default: ""
+
+      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      pre-build-cache-path:
+        type: string
+        default: ""
+      pre-build-cache-key:
+        type: string
+        default: ""
+      pre-build-script:
+        type: string
+        default: ""
+
+      # ── Behaviour ──────────────────────────────────────────────────────────
+      file-jira-on-failure:
+        description: "On failure, file a Jira ticket (into the active sprint). Needs JIRA_* vars + JIRA_API_TOKEN."
+        type: boolean
+        default: false
+      gate-on-new-commit:
+        description: "Only test a given commit on main once (a per-commit cache marker). For nightly use."
+        type: boolean
+        default: false
+      force:
+        type: boolean
+        default: false
+
+    secrets:
+      JIRA_API_TOKEN:         { required: false }
+      SHARED_WORKFLOWS_TOKEN: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      sha: ${{ steps.check.outputs.sha }}
+      short_sha: ${{ steps.check.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Look up "already tested this commit" marker
+        id: marker
+        if: inputs.gate-on-new-commit
+        uses: actions/cache/restore@v4
+        with:
+          path: .tests-run-marker
+          key: tests-run-${{ github.sha }}
+          lookup-only: true
+
+      - id: check
+        name: Decide whether to run
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "force=true → run."; echo "should_run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ inputs.gate-on-new-commit }}" != "true" ]; then
+            echo "Gating disabled → run."; echo "should_run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "Ref ${{ github.ref }} is not refs/heads/main → skip."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "${{ steps.marker.outputs.cache-hit }}" = "true" ]; then
+            echo "Commit already tested → skip."; echo "should_run=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "New, unwatched commit on main → run."; echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
+    env:
+      TEST_RUNNER: ${{ inputs.test-runner }}
+      CONFIGURATION: ${{ inputs.configuration }}
+      USE_TUIST: ${{ inputs.use-tuist }}
+      EXTRA_ARGS: ${{ inputs.xcodebuild-test-args }}
+      TEST_SCHEME: ${{ inputs.test-scheme || vars.SCHEME_NAME }}
+      TEST_PLAN: ${{ inputs.test-plan }}
+      APP_NAME: ${{ inputs.app-name || vars.PRODUCT_NAME }}
+      SWIFT_PACKAGE_PATH: ${{ inputs.swift-package-path }}
+      SWIFT_TEST_FILTER: ${{ inputs.swift-test-filter }}
+      COVERAGE_MIN: ${{ inputs.coverage-min }}
+      PRE_BUILD_SCRIPT: ${{ inputs.pre-build-script }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      - name: Pre-build cache
+        if: inputs.pre-build-cache-path != ''
+        uses: actions/cache@v5
+        with:
+          path: ${{ inputs.pre-build-cache-path }}
+          key: ${{ inputs.pre-build-cache-key }}
+
+      - name: Run tests
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          bash .shared-ci/.github/scripts/run-tests.sh
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ needs.gate.outputs.short_sha }}
+          path: |
+            test-report.json
+            test-results.xcresult
+            swift-coverage.json
+            *-test.log
+          if-no-files-found: warn
+
+      # Failure → optionally file a Jira ticket (into the board's active sprint).
+      - name: File Jira ticket on test failure
+        if: steps.tests.outputs.rc != '0' && inputs.file-jira-on-failure
+        shell: bash
+        env:
+          JIRA_BASE_URL:    ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT_KEY: ${{ vars.JIRA_PROJECT_KEY }}
+          JIRA_USER_EMAIL:  ${{ vars.JIRA_USER_EMAIL }}
+          JIRA_ISSUE_TYPE:  ${{ vars.JIRA_ISSUE_TYPE }}
+          JIRA_BOARD_ID:    ${{ vars.JIRA_BOARD_ID }}
+          JIRA_API_TOKEN:   ${{ secrets.JIRA_API_TOKEN }}
+          COMMIT_SHA:       ${{ needs.gate.outputs.sha }}
+          SHORT_SHA:        ${{ needs.gate.outputs.short_sha }}
+          RUN_URL:          ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${JIRA_API_TOKEN:-}" ]; then
+            echo "::warning::Tests failed but JIRA_API_TOKEN is unset — skipping ticket. The test-results artifact has the evidence."
+            exit 0
+          fi
+          python3 .shared-ci/.github/scripts/create_test_ticket.py --report test-report.json
+
+      # Mark this commit tested (so a future gated run skips) once a verdict is
+      # reached — pass (0) or fail (1). A config/infra error (other) is left
+      # unmarked so it retries.
+      - name: Mark this commit as tested
+        if: steps.tests.outputs.rc == '0' || steps.tests.outputs.rc == '1'
+        shell: bash
+        run: echo "${{ needs.gate.outputs.sha }}" > .tests-run-marker
+      - name: Save tested-commit marker
+        if: steps.tests.outputs.rc == '0' || steps.tests.outputs.rc == '1'
+        uses: actions/cache/save@v4
+        with:
+          path: .tests-run-marker
+          key: tests-run-${{ needs.gate.outputs.sha }}
+
+      - name: Determine result
+        shell: bash
+        run: |
+          RC="${{ steps.tests.outputs.rc }}"
+          if [ "$RC" = "0" ]; then
+            echo "Tests passed. ✅"
+          else
+            echo "::error::Tests failed (run-tests.sh exit=$RC). See the run summary + the test-results artifact."
+            exit 1
+          fi

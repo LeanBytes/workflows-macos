@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.41
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.42
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -109,6 +109,37 @@ on:
         description: "Xcode build configuration for the App Store archive. Default 'Release'; set to e.g. 'Release Store' if your project uses a separate config for App Store builds."
         type: string
         default: "Release"
+
+      # ── Tests (opt-in) — gate the beta on the app's Swift tests ────────────
+      run-tests:
+        description: "Run tests before building; if they fail, the beta is NOT published, the workflow fails, and a Jira ticket is filed."
+        type: boolean
+        default: false
+      test-runner:
+        description: "xcodebuild | swift | both."
+        type: string
+        default: "xcodebuild"
+      test-scheme:
+        type: string
+        default: ""
+      test-plan:
+        type: string
+        default: ""
+      xcodebuild-test-args:
+        type: string
+        default: ""
+      app-name:
+        type: string
+        default: ""
+      swift-package-path:
+        type: string
+        default: "."
+      swift-test-filter:
+        type: string
+        default: ""
+      coverage-min:
+        type: string
+        default: ""
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
     # silently passes nothing) can pass secrets explicitly. Same-org callers
     # can keep using `secrets: inherit` — the declarations are no-ops for them.
@@ -212,10 +243,39 @@ jobs:
           echo "  Build number:        ${BUILD_NUMBER}"
           echo "  Beta tag:            ${BETA_TAG}"
 
-  build-direct:
-    if: inputs.build-direct
+  # ── Tests (opt-in) — gate before build/publish ───────────────────────────
+  # On failure: the build jobs skip (so no beta is published) and a Jira ticket
+  # is filed into the active sprint. When run-tests is false this job is skipped,
+  # and `result == 'skipped' != 'failure'` lets the builds run unchanged.
+  test:
+    if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.41
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.42
+    with:
+      test-runner: ${{ inputs.test-runner }}
+      runs-on: ${{ inputs.runs-on-build }}
+      test-scheme: ${{ inputs.test-scheme }}
+      test-plan: ${{ inputs.test-plan }}
+      configuration: ${{ inputs.configuration-direct }}
+      use-tuist: ${{ inputs.use-tuist }}
+      xcodebuild-test-args: ${{ inputs.xcodebuild-test-args }}
+      app-name: ${{ inputs.app-name }}
+      swift-package-path: ${{ inputs.swift-package-path }}
+      swift-test-filter: ${{ inputs.swift-test-filter }}
+      coverage-min: ${{ inputs.coverage-min }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      file-jira-on-failure: true
+      gate-on-new-commit: false
+    secrets:
+      JIRA_API_TOKEN:         ${{ secrets.JIRA_API_TOKEN }}
+      SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+
+  build-direct:
+    if: ${{ always() && inputs.build-direct && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
+    needs: [prepare, test]
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.42
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -243,9 +303,9 @@ jobs:
       SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   build-app-store:
-    if: inputs.build-app-store
-    needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.41
+    if: ${{ always() && inputs.build-app-store && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
+    needs: [prepare, test]
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.42
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -268,10 +328,13 @@ jobs:
       PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
 
   publish-beta:
-    needs: [prepare, build-direct, build-app-store]
-    # Tolerate skipped builds; require at least one to have succeeded.
+    needs: [prepare, test, build-direct, build-app-store]
+    # Tolerate skipped builds; require at least one to have succeeded. A failed
+    # test gate (run-tests) blocks publish — the build jobs skipped, so nothing
+    # ships.
     if: |
       always() &&
+      needs.test.result != 'failure' &&
       needs.build-direct.result != 'failure' &&
       needs.build-app-store.result != 'failure' &&
       (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')

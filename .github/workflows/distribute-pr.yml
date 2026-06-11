@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.41
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.42
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,6 +84,41 @@ on:
         type: boolean
         default: false
 
+      # ── Tests (opt-in) — run the app's Swift tests on the PR ───────────────
+      run-tests:
+        description: "Run tests on the PR (red check on failure). Off = compile-only (current behaviour)."
+        type: boolean
+        default: false
+      test-runner:
+        description: "xcodebuild | swift | both."
+        type: string
+        default: "xcodebuild"
+      test-scheme:
+        description: "Scheme to test (defaults to scheme-name, else SCHEME_NAME). Pass a literal for fork PRs."
+        type: string
+        default: ""
+      test-plan:
+        type: string
+        default: ""
+      xcodebuild-test-args:
+        type: string
+        default: ""
+      app-name:
+        type: string
+        default: ""
+      swift-package-path:
+        type: string
+        default: "."
+      swift-test-filter:
+        type: string
+        default: ""
+      coverage-min:
+        type: string
+        default: ""
+
+    secrets:
+      SHARED_WORKFLOWS_TOKEN: { required: false }
+
 permissions:
   contents: read
 
@@ -137,27 +172,28 @@ jobs:
 
           echo "Changelog.json OK — next version to ship: ${NEXT_VERSION}"
 
+      # ── Compile-only path (skipped when run-tests: the `test` job builds) ──
       # ── Tuist (opt-in) ─────────────────────────────────────────────────────
       - name: Install Tuist
-        if: inputs.use-tuist
+        if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
         run: |
           brew tap tuist/tuist
           brew install --formula tuist
 
       - name: Fetch Swift package dependencies (Tuist)
-        if: inputs.use-tuist
+        if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
         run: tuist install
 
       - name: Generate Xcode project (Tuist)
-        if: inputs.use-tuist
+        if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
         run: tuist generate --no-open
 
       # ── SwiftPM (when not Tuist) ───────────────────────────────────────────
       - name: Resolve Swift package dependencies
-        if: ${{ !inputs.use-tuist }}
+        if: ${{ !inputs.use-tuist && !inputs.run-tests }}
         shell: bash
         run: |
           set -euo pipefail
@@ -167,14 +203,14 @@ jobs:
 
       # ── Pre-build hooks (caller-provided) ──────────────────────────────────
       - name: Pre-build cache
-        if: inputs.pre-build-cache-path != ''
+        if: ${{ inputs.pre-build-cache-path != '' && !inputs.run-tests }}
         uses: actions/cache@v5
         with:
           path: ${{ inputs.pre-build-cache-path }}
           key: ${{ inputs.pre-build-cache-key }}
 
       - name: Pre-build script
-        if: inputs.pre-build-script != ''
+        if: ${{ inputs.pre-build-script != '' && !inputs.run-tests }}
         shell: bash
         run: bash "${{ inputs.pre-build-script }}"
 
@@ -182,8 +218,10 @@ jobs:
       # CODE_SIGNING_ALLOWED=NO + CODE_SIGNING_REQUIRED=NO let xcodebuild
       # compile without selecting an identity / provisioning profile.
       # Fork PRs (where GitHub strips secrets) and same-repo PRs alike get
-      # the same fast "does this build?" signal.
+      # the same fast "does this build?" signal. Skipped when run-tests: the
+      # `test` job builds the app as part of running the tests.
       - name: Compile (no signing)
+        if: ${{ !inputs.run-tests }}
         shell: bash
         run: |
           set -euo pipefail
@@ -195,3 +233,27 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
             ${{ inputs.extra-xcodebuild-args }}
+
+  # ── Tests (opt-in) — red PR check on failure, no Jira ticket ─────────────
+  test:
+    if: inputs.run-tests
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.42
+    with:
+      test-runner: ${{ inputs.test-runner }}
+      runs-on: ${{ inputs.runs-on-build }}
+      test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || inputs.scheme-name }}
+      test-plan: ${{ inputs.test-plan }}
+      configuration: ${{ inputs.configuration-direct }}
+      use-tuist: ${{ inputs.use-tuist }}
+      xcodebuild-test-args: ${{ inputs.xcodebuild-test-args }}
+      app-name: ${{ inputs.app-name }}
+      swift-package-path: ${{ inputs.swift-package-path }}
+      swift-test-filter: ${{ inputs.swift-test-filter }}
+      coverage-min: ${{ inputs.coverage-min }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      file-jira-on-failure: false
+      gate-on-new-commit: false
+    secrets:
+      SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
