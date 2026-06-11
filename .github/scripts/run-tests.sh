@@ -16,7 +16,8 @@
 # failing test, a coverage-gate miss, or an infra error.
 #
 # Env:
-#   TEST_RUNNER (default xcodebuild) | CONFIGURATION (default Release) | APP_NAME (for the report)
+#   TEST_RUNNER (default xcodebuild) | CONFIGURATION (default Debug; Release auto-enables
+#               ENABLE_TESTABILITY for the test build) | APP_NAME (for the report)
 #   xcodebuild: TEST_SCHEME (required for that runner), TEST_PLAN (opt), USE_TUIST, EXTRA_ARGS,
 #               PRE_BUILD_SCRIPT (opt)
 #   swift:      SWIFT_PACKAGE_PATH (default .), SWIFT_TEST_FILTER (opt), COVERAGE_MIN (opt; "" = report only)
@@ -26,7 +27,7 @@
 set -uo pipefail
 
 TEST_RUNNER="${TEST_RUNNER:-xcodebuild}"
-CONFIGURATION="${CONFIGURATION:-Release}"
+CONFIGURATION="${CONFIGURATION:-Debug}"
 USE_TUIST="${USE_TUIST:-false}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 SWIFT_PACKAGE_PATH="${SWIFT_PACKAGE_PATH:-.}"
@@ -65,7 +66,7 @@ except Exception: pass' "$cov_path")
 }
 
 run_xcodebuild() {
-  banner "xcodebuild test  (scheme: $TEST_SCHEME)"
+  banner "xcodebuild test  (scheme: $TEST_SCHEME, config: $CONFIGURATION)"
   : "${TEST_SCHEME:?TEST_SCHEME is required for the xcodebuild runner}"
   XC_DID_RUN=1
 
@@ -89,6 +90,12 @@ run_xcodebuild() {
   local plan_args=()
   [ -n "${TEST_PLAN:-}" ] && plan_args=(-testPlan "$TEST_PLAN")
 
+  # Debug enables testability by default; Release does not, so `@testable import` would
+  # fail to compile. When testing in Release (the opt-in escape hatch), enable it for the
+  # test build ONLY — the shipped archive is a separate xcodebuild run, so it's unaffected.
+  local testability_args=()
+  [ "$CONFIGURATION" = "Release" ] && testability_args=(ENABLE_TESTABILITY=YES)
+
   rm -rf "$WORK/test-results.xcresult"
   # EXTRA_ARGS intentionally unquoted (word-split into build settings).
   xcodebuild test \
@@ -99,6 +106,7 @@ run_xcodebuild() {
     -resultBundlePath "$WORK/test-results.xcresult" \
     ${plan_args[@]+"${plan_args[@]}"} \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+    ${testability_args[@]+"${testability_args[@]}"} \
     $EXTRA_ARGS 2>&1 | tee "$WORK/xcodebuild-test.log"
   XC_RC=${PIPESTATUS[0]}
 }

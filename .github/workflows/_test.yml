@@ -46,8 +46,9 @@ on:
         type: string
         default: ""
       configuration:
+        description: "Test build configuration. Default 'Debug' (testability on automatically). 'Release' is an opt-in optimized smoke test — run-tests.sh auto-enables testability for the test build."
         type: string
-        default: "Release"
+        default: "Debug"
       use-tuist:
         type: boolean
         default: false
