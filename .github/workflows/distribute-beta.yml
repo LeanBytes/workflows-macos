@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.44
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.45
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -250,7 +250,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.45
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -274,7 +274,7 @@ jobs:
   build-direct:
     if: ${{ always() && inputs.build-direct && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.45
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -304,7 +304,7 @@ jobs:
   build-app-store:
     if: ${{ always() && inputs.build-app-store && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.45
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}

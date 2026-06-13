@@ -13,11 +13,12 @@ on:
       - '!v*-beta.*'   # exclude beta tags auto-pushed by distribute-beta.yml
 
 permissions:
-  contents: write    # for the GH Release
+  contents: write       # for the GH Release + tag
+  discussions: write    # required for create-discussion (harmless when it's off)
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.45
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes

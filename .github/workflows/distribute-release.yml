@@ -35,7 +35,7 @@
 #         - '!v*-beta.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.44
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.45
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -156,7 +156,13 @@ on:
       SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
-  contents: write          # to create GH Release + push tag + upload assets
+  contents: write          # create GH Release + push tag + upload assets
+  # An explicit permissions block forces every UNLISTED scope to `none` — even
+  # when the caller grants it — so `discussions: write` MUST be declared here for
+  # the opt-in `create-discussion` path, or `gh release create --discussion-category`
+  # 404s ("Discussion could not be created"). Harmless (unused) when create-discussion
+  # is false. The caller's per-app shell must ALSO grant `discussions: write`.
+  discussions: write       # create the auto-discussion (create-discussion)
 
 jobs:
   prepare:
@@ -219,7 +225,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.45
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -249,7 +255,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.45
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}

@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.44
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.45
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ jobs:
   # ── Tests (opt-in) — red PR check on failure, no Jira ticket ─────────────
   test:
     if: inputs.run-tests
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.44
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.45
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
