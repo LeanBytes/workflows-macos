@@ -40,7 +40,7 @@ The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Stor
     {
       "version": "2.12.0",          // ← versions[0]: in-progress / next to ship
       "items": [
-        {"type": "feat", "title": {"en": "Show folder color from macOS 26 Tahoe"}, "issue": "MP-417"},
+        {"type": "feat", "title": {"en": "Show folder color from macOS 26 Tahoe"}, "issues": ["MP-417", "MP-418"]},
         {"type": "fix",  "title": {"en": "First NAS transfer fails on cold drive"}}
       ]
     },
@@ -56,7 +56,7 @@ The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Stor
 
 **Item types:** `feat` → New Features, `fix` → Bug Fixes, `core` → Improvements. Anything else (including legacy `chore`) is silently dropped from the customer-facing render.
 
-**Optional `issue` field.** Each item may carry an `"issue"` **string** — the Jira key (`"MP-417"`) or GitHub issue (`"#98"`) the change traces back to, or omitted when there's none. It's pure provenance: both the CI pipeline and the app's in-product What's New view **ignore** it, so it never reaches customers. (It replaced the earlier numeric `pr` field, which was likewise unused — `issue` is just more useful to a human reading the file, and you set it without waiting for a PR number.)
+**Optional `issues` field.** Each item may carry an `"issues"` **array of strings** — the Jira keys (`"MP-417"`) and/or GitHub issues (`"#98"`) the change traces back to. Use a one-element list for a single ticket (`["MP-417"]`), several for a change that closes more than one, and omit the key entirely when there's none. It's pure provenance: both the CI pipeline and the app's in-product What's New view **ignore** it, so it never reaches customers. (It replaced the earlier numeric `pr` field, which was likewise unused — `issues` is more useful to a human reading the file, holds multiple tickets per change, and you set it without waiting for a PR number.)
 
 **Tags mark ship moments:**
 - `vX.Y.Z` — stable release. You push this manually when ready.
