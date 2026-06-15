@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.45
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.46
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -250,7 +250,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.45
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.46
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -274,7 +274,7 @@ jobs:
   build-direct:
     if: ${{ always() && inputs.build-direct && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.45
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.46
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -304,7 +304,7 @@ jobs:
   build-app-store:
     if: ${{ always() && inputs.build-app-store && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.45
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.46
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -403,12 +403,21 @@ jobs:
           # logs as "ERROR: … status code 500" and then retries + recovers; that
           # recovered line must not fail the job (it used to — a false failure on a
           # successful upload).
+          # NB: GitHub runs this step as `bash -e` (errexit), and the
+          # `set -uo pipefail` above does NOT clear it. A naked
+          # `OUTPUT=$(altool ...)` capture would abort the whole step the instant
+          # altool exits non-zero — before RC, the echo, or any decision below
+          # runs (a recovered transient 5xx and an "already uploaded" re-run both
+          # exit non-zero too). Drop errexit just around the capture so the
+          # text-marker decision logic always runs.
+          set +e
           OUTPUT=$(xcrun altool --upload-app \
             --type macos \
             --file "$PKG" \
             --apiKey "$ASC_KEY_ID" \
             --apiIssuer "$ASC_ISSUER_ID" 2>&1)
           RC=$?
+          set -e
           echo "$OUTPUT"
 
           if grep -qE "UPLOAD SUCCEEDED|No errors uploading" <<<"$OUTPUT"; then
