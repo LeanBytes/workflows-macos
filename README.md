@@ -135,14 +135,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.3.46`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.3.47`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.47
     secrets: inherit
     with:
       # …
@@ -159,6 +159,8 @@ The beta and release orchestrators expose four independent toggles for build/dis
 | `distribute-app-store` | `false` | altool upload to ASC. Requires `build-app-store`. |
 | `distribute-beta-appcast` *(beta only)* | `false` | Publish to the Sparkle beta channel. Requires `build-direct`. |
 | `distribute-stable-appcast` *(release only)* | `true` | Publish to the Sparkle stable channel. Requires `build-direct`. |
+
+A separate **`lfs`** input (default `false`, on every build workflow — PR, beta, release, nightly tests, memory-watch) makes `actions/checkout` pull the caller repo's git LFS files on the **build** checkouts. Flip it to `true` only when a build input is LFS-tracked (e.g. FlowMoose's Whisper `ggml-base.bin`); it's scoped to the checkouts that actually compile, so prepare/publish steps never pull the LFS payload. Apps with no LFS leave it off and are unaffected.
 
 Common configurations:
 

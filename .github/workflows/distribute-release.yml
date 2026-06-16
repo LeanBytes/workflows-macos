@@ -35,7 +35,7 @@
 #         - '!v*-beta.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.46
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.47
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -94,6 +94,10 @@ on:
       runs-on-publish:
         type: string
         default: '"macos-26"'
+      lfs:
+        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        type: boolean
+        default: false
       appcast-filename:
         type: string
         default: "appcast.xml"
@@ -225,7 +229,7 @@ jobs:
   build-direct:
     if: inputs.build-direct
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.47
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -239,6 +243,7 @@ jobs:
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
+      lfs: ${{ inputs.lfs }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -255,7 +260,7 @@ jobs:
   build-app-store:
     if: inputs.build-app-store
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.47
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -266,6 +271,7 @@ jobs:
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-app-store }}
+      lfs: ${{ inputs.lfs }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}

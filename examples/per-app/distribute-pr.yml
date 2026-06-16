@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.47
     with:
       # ── Scheme name (literal, required for fork-PR support) ────────────
       # GitHub strips `vars.*` from fork-PR workflow runs, so a vars-based
@@ -26,6 +26,7 @@ jobs:
 
       # ── Optional per-app inputs (uncomment what applies) ────────────────
       # use-tuist: true                # FlowMoose
+      # lfs: true                      # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
       # runs-on-build: '["self-hosted","agent-alex"]'  # FlowMoose self-hosted
       # extra-xcodebuild-args: ""
 

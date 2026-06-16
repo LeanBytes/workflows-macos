@@ -35,6 +35,10 @@ on:
       job-timeout-minutes:
         type: number
         default: 60
+      lfs:
+        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        type: boolean
+        default: false
 
       # ── xcodebuild runner (the app/UI scheme) ──────────────────────────────
       test-scheme:
@@ -169,6 +173,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: true
+          lfs: ${{ inputs.lfs }}
 
       - name: Checkout shared scripts
         uses: actions/checkout@v6

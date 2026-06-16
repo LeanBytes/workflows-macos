@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.46
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.47
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,6 +47,11 @@ on:
         description: "JSON-encoded runner label or array (e.g. '\"macos-26\"')."
         type: string
         default: '"macos-26"'
+
+      lfs:
+        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        type: boolean
+        default: false
 
       extra-xcodebuild-args:
         description: "Additional xcodebuild settings appended to the build command."
@@ -137,6 +142,7 @@ jobs:
         with:
           fetch-depth: 0  # safeguard needs full tag history
           submodules: true
+          lfs: ${{ inputs.lfs }}
 
       - name: Verify scheme name is resolvable
         shell: bash
@@ -237,10 +243,11 @@ jobs:
   # ── Tests (opt-in) — red PR check on failure, no Jira ticket ─────────────
   test:
     if: inputs.run-tests
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.47
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
+      lfs: ${{ inputs.lfs }}
       test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || inputs.scheme-name }}
       test-plan: ${{ inputs.test-plan }}
       use-tuist: ${{ inputs.use-tuist }}

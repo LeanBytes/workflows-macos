@@ -66,6 +66,7 @@ Conventions:
 - **Notarization**: ASC API key (`AuthKey_<id>.p8`) under `~/.appstoreconnect/private_keys/`, `notarytool submit --wait`. Rejection log is fetched and printed on failure.
 - **Artifact distribution**: S3 bucket in `eu-central-1`. `${{ vars.S3_DISTRIBUTION_PATH }}` is the upload target; `${{ vars.S3_DOWNLOAD_URL }}` is the public base URL embedded in PR comments. (macpacker stores `S3_DISTRIBUTION_PATH` as a **secret**, not a var — drift worth normalizing.)
 - **Runner**: hosted `macos-26` everywhere by default. `_build-direct.yml` accepts a `runs-on` input (JSON-encoded label or label array); FlowMoose's beta shell passes `["self-hosted","agent-alex"]`.
+- **LFS**: every build workflow takes an `lfs` boolean input (default `false`), plumbed to `actions/checkout` on the **build-feeding** checkouts only (`_build-direct`/`_build-app-store`/`_test` test job/`distribute-pr` verify/`memory-watch` watch; the orchestrators pass it through to their callees). `prepare`/`publish`/`gate` checkouts stay plain — they only read `Changelog.json` or publish artifacts, so they never pull the LFS payload. FlowMoose sets `lfs: true` (its Whisper `ggml-base.bin` is LFS-tracked); the other apps leave it off (a no-op).
 
 ## Scripts in `.github/scripts/`
 

@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   memory-watch:
-    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.3.47
     secrets:
       # Only needed when file-jira-on-leak: true (a leak files a Jira ticket).
       JIRA_API_TOKEN:         ${{ secrets.JIRA_API_TOKEN }}
@@ -42,6 +42,7 @@ jobs:
       # app-name: MyApp               # the .app + process name; defaults to PRODUCT_NAME
       # process-name: MyApp           # only if the process differs from app-name
       use-tuist: true                 # TailBeat / FlowMoose (Tuist projects)
+      # lfs: true                     # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
       # configuration: Release
       # extra-xcodebuild-args: ""
 

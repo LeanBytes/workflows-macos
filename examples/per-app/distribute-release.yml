@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.47
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes
@@ -55,6 +55,7 @@ jobs:
 
       # ── Per-app build flags ─────────────────────────────────────────────
       # use-tuist: true                # FlowMoose
+      # lfs: true                      # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
       # has-finder-extension: true     # macpacker
       # has-quicklook-extension: true  # macpacker
       # extra-xcodebuild-args: ""

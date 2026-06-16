@@ -32,7 +32,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.46
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.47
 #       with:
 #         build-app-store: true         # macpacker, filefillet
 #         distribute-app-store: true    # macpacker, filefillet
@@ -89,6 +89,10 @@ on:
         description: "Publish job needs macOS for altool + Sparkle generate_appcast"
         type: string
         default: '"macos-26"'
+      lfs:
+        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        type: boolean
+        default: false
       appcast-filename:
         description: "Appcast XML filename on S3 (Sparkle uses one file with channel-tagged items)"
         type: string
@@ -250,10 +254,11 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.47
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
+      lfs: ${{ inputs.lfs }}
       test-scheme: ${{ inputs.test-scheme }}
       test-plan: ${{ inputs.test-plan }}
       use-tuist: ${{ inputs.use-tuist }}
@@ -274,7 +279,7 @@ jobs:
   build-direct:
     if: ${{ always() && inputs.build-direct && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.47
     with:
       version: ${{ needs.prepare.outputs.direct-marketing }}   # e.g. "2.12.0-beta.4"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -288,6 +293,7 @@ jobs:
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
+      lfs: ${{ inputs.lfs }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -304,7 +310,7 @@ jobs:
   build-app-store:
     if: ${{ always() && inputs.build-app-store && needs.prepare.result == 'success' && needs.test.result != 'failure' }}
     needs: [prepare, test]
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.46
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.47
     with:
       version: ${{ needs.prepare.outputs.store-marketing }}    # clean "2.12.0" (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -315,6 +321,7 @@ jobs:
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-app-store }}
+      lfs: ${{ inputs.lfs }}
     # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
