@@ -11,6 +11,7 @@ on:
     tags:
       - 'v*'           # matches v0.15, v0.15.1, v2.11.0, …
       - '!v*-beta.*'   # exclude beta tags auto-pushed by distribute-beta.yml
+      - '!v*-alpha.*'  # exclude alpha tags pushed by distribute-alpha.yml (private invite builds)
 
 permissions:
   contents: write       # for the GH Release + tag
@@ -18,7 +19,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.47
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.48
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes
