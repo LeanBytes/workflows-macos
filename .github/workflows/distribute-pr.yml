@@ -16,7 +16,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.48
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.49
 #       with:
 #         # … optional inputs …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,22 +180,32 @@ jobs:
 
       # ── Compile-only path (skipped when run-tests: the `test` job builds) ──
       # ── Tuist (opt-in) ─────────────────────────────────────────────────────
-      - name: Install Tuist
+      - name: Install Tuist (via mise)
         if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
         run: |
-          brew tap tuist/tuist
-          brew install --formula tuist
+          set -euo pipefail
+          # The `brew tap tuist/tuist` cask is broken upstream (invalid
+          # `conflicts_with formula:` stanza), so Tuist is installed through mise,
+          # via its official one-liner (the method used on the self-hosted runner).
+          # mise lands in ~/.local/bin — add it to PATH now and to $GITHUB_PATH so
+          # the Fetch/Generate steps below find it. A committed mise.toml pin is
+          # honored, else latest. CI sets CI=true so mise auto-trusts the config.
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v mise >/dev/null 2>&1 || curl https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mise install
+          mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
 
       - name: Fetch Swift package dependencies (Tuist)
         if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
-        run: tuist install
+        run: mise exec -- tuist install
 
       - name: Generate Xcode project (Tuist)
         if: ${{ inputs.use-tuist && !inputs.run-tests }}
         shell: bash
-        run: tuist generate --no-open
+        run: mise exec -- tuist generate --no-open
 
       # ── SwiftPM (when not Tuist) ───────────────────────────────────────────
       - name: Resolve Swift package dependencies
@@ -243,7 +253,7 @@ jobs:
   # ── Tests (opt-in) — red PR check on failure, no Jira ticket ─────────────
   test:
     if: inputs.run-tests
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.48
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.3.49
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}

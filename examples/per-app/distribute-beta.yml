@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   beta:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.48
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.3.49
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
     # personal org) must pass secrets explicitly — `inherit` silently passes

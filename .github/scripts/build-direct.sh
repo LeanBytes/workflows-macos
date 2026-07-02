@@ -140,9 +140,22 @@ restore_keychains() {
 phase_setup() {
   banner "Resolve dependencies"
   if [ "$USE_TUIST" = "true" ]; then
-    command -v tuist >/dev/null 2>&1 || { brew tap tuist/tuist; brew install --formula tuist; }
-    tuist install
-    tuist generate --no-open
+    # Tuist via mise. The Homebrew tap (`brew tap tuist/tuist`) is broken upstream
+    # — its cask carries an invalid `conflicts_with formula:` stanza that fails the
+    # tap outright — so Tuist is installed through mise instead. mise is installed
+    # with its official one-liner (the same method used on the self-hosted runner);
+    # it lands in ~/.local/bin, which isn't on PATH by default, so we prepend it.
+    # A committed mise.toml / .tool-versions pin is honored (reproducible builds);
+    # without one we fall back to latest. Runners that already have mise skip the
+    # install; CI auto-trusts the repo config (CI=true), so no `mise trust`.
+    # `mise exec` runs Tuist without needing it on PATH (mise shims aren't active
+    # in the non-interactive CI shell).
+    export PATH="$HOME/.local/bin:$PATH"
+    command -v mise >/dev/null 2>&1 || curl https://mise.run | sh
+    mise install
+    mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
+    mise exec -- tuist install
+    mise exec -- tuist generate --no-open
   else
     : "${SCHEME_NAME:?SCHEME_NAME is required}"
     xcodebuild -resolvePackageDependencies \

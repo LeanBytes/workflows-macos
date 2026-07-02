@@ -213,9 +213,16 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ inputs.use-tuist }}" = "true" ]; then
-            command -v tuist >/dev/null 2>&1 || { brew tap tuist/tuist; brew install --formula tuist; }
-            tuist install
-            tuist generate --no-open
+            # Tuist via mise (the `brew tap tuist/tuist` cask is broken upstream).
+            # mise is installed with its official one-liner into ~/.local/bin (not
+            # on PATH by default → we prepend it); a committed mise.toml pin is
+            # honored, else latest. `mise exec` runs Tuist without it being on PATH.
+            export PATH="$HOME/.local/bin:$PATH"
+            command -v mise >/dev/null 2>&1 || curl https://mise.run | sh
+            mise install
+            mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
+            mise exec -- tuist install
+            mise exec -- tuist generate --no-open
           else
             : "${SCHEME:?scheme is required (input 'scheme' or the SCHEME_NAME repo var)}"
             xcodebuild -resolvePackageDependencies -scheme "$SCHEME" -configuration "$CONFIGURATION"

@@ -71,8 +71,19 @@ run_xcodebuild() {
   XC_DID_RUN=1
 
   if [ "$USE_TUIST" = "true" ]; then
-    command -v tuist >/dev/null 2>&1 || { brew tap tuist/tuist; brew install --formula tuist; }
-    if ! { tuist install && tuist generate --no-open; }; then
+    # Tuist via mise — the `brew tap tuist/tuist` cask is broken upstream (invalid
+    # `conflicts_with formula:` stanza). mise is installed with its official
+    # one-liner into ~/.local/bin (not on PATH by default → we prepend it); a
+    # committed mise.toml pin is honored, else latest. `mise exec` runs Tuist
+    # without it being on PATH. Whole sequence is managed (no `set -e`) → XC_RC=70.
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! {
+      { command -v mise >/dev/null 2>&1 || curl https://mise.run | sh; } &&
+      mise install &&
+      { mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest; } &&
+      mise exec -- tuist install &&
+      mise exec -- tuist generate --no-open
+    }; then
       echo "::error::Tuist setup failed"; XC_RC=70; return
     fi
   fi
