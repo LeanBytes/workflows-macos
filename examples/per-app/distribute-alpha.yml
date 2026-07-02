@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.3.49
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.3.50
     # `secrets: inherit` only works when the caller is in the same org/enterprise
     # as workflows-macos (LeanBytes). Cross-account callers must pass secrets
     # explicitly — the explicit list below works universally. Direct subset only:

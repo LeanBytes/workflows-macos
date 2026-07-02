@@ -84,6 +84,14 @@ compute_paths() {
   : "${ARTIFACT_LABEL:?ARTIFACT_LABEL is required}"
 
   ARCHIVE="$WORK_DIR/app.xcarchive"
+  # DerivedData pinned inside WORK_DIR instead of Xcode's default
+  # ~/Library/Developer/Xcode/DerivedData. That default location survives between
+  # jobs on a self-hosted runner and leaks stale build products / module caches
+  # into later builds; WORK_DIR is ephemeral (phase_cleanup wipes it every run,
+  # phase_setup re-cleans it up front), so every build starts cold like a fresh
+  # GitHub-hosted runner. Passed to xcodebuild via -derivedDataPath in setup +
+  # archive. Dependency caches (SwiftPM/Tuist/model) live elsewhere and stay warm.
+  DERIVED_DATA="$WORK_DIR/DerivedData"
   EXPORT_DIR="$WORK_DIR/export"
   APP="$EXPORT_DIR/${PRODUCT_NAME}.app"
   DMG_PATH="$OUTPUT_DIR/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg"
@@ -139,6 +147,12 @@ restore_keychains() {
 # ── Phases ───────────────────────────────────────────────────────────────────
 phase_setup() {
   banner "Resolve dependencies"
+  # Start from a clean work dir. Self-hosted runners persist state between jobs;
+  # WORK_DIR holds our ephemeral DerivedData (see compute_paths), so wiping it
+  # here guarantees a cold, hosted-runner-equivalent build even if a prior run's
+  # phase_cleanup didn't execute (e.g. a hard-cancelled job). setup is always the
+  # first phase, so this never clobbers state written by later phases.
+  rm -rf "$WORK_DIR"; mkdir -p "$WORK_DIR"
   if [ "$USE_TUIST" = "true" ]; then
     # Tuist via mise. The Homebrew tap (`brew tap tuist/tuist`) is broken upstream
     # — its cask carries an invalid `conflicts_with formula:` stanza that fails the
@@ -160,7 +174,8 @@ phase_setup() {
     : "${SCHEME_NAME:?SCHEME_NAME is required}"
     xcodebuild -resolvePackageDependencies \
       -scheme "$SCHEME_NAME" \
-      -configuration Release
+      -configuration Release \
+      -derivedDataPath "$DERIVED_DATA"
   fi
   # Optional caller asset hook (e.g. download a model). CI runs this as its own
   # native step; locally it runs here when PRE_BUILD_SCRIPT is set.
@@ -240,6 +255,7 @@ phase_archive() {
     -scheme "$SCHEME_NAME" \
     -configuration "$CONFIGURATION" \
     -archivePath "$ARCHIVE" \
+    -derivedDataPath "$DERIVED_DATA" \
     -destination "generic/platform=macOS" \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
