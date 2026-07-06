@@ -1,0 +1,17 @@
+{
+  "id": "app",
+  "platform": "macos",
+  "scheme": "MyApp",
+  "product-name": "MyApp",
+  "bundle-id": "com.example.myapp",
+  "scheme-store": "MyApp",
+  "build-direct": true,
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "changelog": {
+    "versions": [
+      { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "Initial release" } } ] }
+    ]
+  }
+}

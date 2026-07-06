@@ -6,82 +6,61 @@
 # out PRIVATELY via an unlisted S3 URL — NO appcast, NO changelog, NO GitHub
 # Release. Use it to give a rough early build to a hand-picked few by invite.
 #
-# Identity is `<base>-alpha.<N>` (e.g. 3.0.0-alpha.1): <base> from the branch's
-# Config/Changelog.json versions[0].version (read-only) or the version-base
-# input; <N> auto-counted from existing v<base>-alpha.* git tags.
+# v0.4.0: pass `product-id` — identity + base version come from
+# Config/products/<id>.json, and the tag is `<id>-v<base>-alpha.<N>`
+# (<base> = that product's changelog.versions[0].version, overridable via
+# version-base; <N> auto-counted from existing tags).
 #
 # To cut one:  Actions → "Distribute Alpha" → Run workflow → pick the branch → Run.
 # The run summary prints the download URL to send to invitees.
 #
 # TWO prerequisites:
-#   1. This file must exist on the DEFAULT branch for the "Run workflow" button to
-#      appear, AND on the branch you intend to build (so the run uses that branch's
-#      definition + code). If your v3 branch forked before this file existed, merge
-#      the default branch into it (or cherry-pick this file).
-#   2. Your distribute-release.yml MUST exclude alpha tags, or the v<base>-alpha.<N>
-#      tag push will fire a real release:
-#        on:
-#          push:
-#            tags:
-#              - 'v*'
-#              - '!v*-beta.*'
-#              - '!v*-alpha.*'   # ← add this
+#   1. This file must exist on the DEFAULT branch (for the "Run workflow" button)
+#      AND on the branch you build (so the run uses that branch's code).
+#   2. Your distribute-release.yml MUST exclude alpha tags (its filter already
+#      has `- '!*-v*-alpha.*'`), or the tag push fires a real release.
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute Alpha
 
 on:
   workflow_dispatch:
     inputs:
+      product-id:
+        description: "Product id (Config/products/<id>.json) to cut an alpha of."
+        required: true
+        default: "main"
       version-base:
-        description: "Override base version (e.g. 3.0.0). Leave empty to read the branch's Changelog.json versions[0]."
+        description: "Override base version (e.g. 3.0.0). Empty = the product's changelog versions[0]."
         required: false
         default: ""
 
 permissions:
-  contents: write          # push the v<base>-alpha.<N> tag
+  contents: write          # push the <id>-v<base>-alpha.<N> tag
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.3.50
-    # `secrets: inherit` only works when the caller is in the same org/enterprise
-    # as workflows-macos (LeanBytes). Cross-account callers must pass secrets
-    # explicitly — the explicit list below works universally. Direct subset only:
-    # no Sparkle key and no App Store certs/profiles (alphas are Direct-only).
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.0
+    # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
       PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-      # PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}   # only if has-finder-extension: true
-      # PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}       # only if has-quicklook-extension: true
+      # PROV_PROF_DEVID_PRO_BASE64:   ${{ secrets.PROV_PROF_DEVID_PRO_BASE64 }}   # if the product names devid-profile-secret
       ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      # SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}          # only if you fork workflows-macos private
+      # SHARED_WORKFLOWS_TOKEN:       ${{ secrets.SHARED_WORKFLOWS_TOKEN }}        # only if workflows-macos is a private fork
     with:
-      # Pass the manual override through (empty → read Changelog.json versions[0]).
+      product-id: ${{ inputs.product-id }}       # sources identity + base from Config/products/<id>.json
       version-base: ${{ inputs.version-base }}
-
       # ── Per-app build flags (match your distribute-beta.yml) ────────────
       # use-tuist: true                # FlowMoose
-      # lfs: true                      # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
-      # has-finder-extension: true     # macpacker
-      # has-quicklook-extension: true  # macpacker
-      # extra-xcodebuild-args: ""
-
-      # ── Pre-build hooks (e.g. asset download) ──────────────────────────
+      # lfs: true                      # if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
+      # runs-on-build: '["self-hosted","agent-alex"]'
+      # runs-on-publish: '["self-hosted","agent-alex"]'
       # pre-build-cache-path: FlowMoose/Models/ggml-base.bin
       # pre-build-cache-key: whisper-base-model-v1
       # pre-build-script: .ci/download-whisper-model.sh
-
-      # ── Runners ─────────────────────────────────────────────────────────
-      # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
-      # runs-on-publish: '["self-hosted","agent-alex"]' # FlowMoose
-
-      # ── Changelog.json (default: Config/Changelog.json) ─────────────────
-      # changelog-path: Config/Changelog.json
-
-      # ── Build configuration override (default: "Release") ───────────────
-      # configuration-direct: Release

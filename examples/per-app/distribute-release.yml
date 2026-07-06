@@ -1,92 +1,46 @@
-# ── Per-app release distribution shell ───────────────────────────────────────
-# Copy into each app repo at .github/workflows/distribute-release.yml.
-# Triggered by pushing a v-prefixed tag (vX.Y or vX.Y.Z), excluding the
-# auto-pushed beta tags. Strict fail-safe order: GH Release is only created
-# after every other publish step succeeds.
+# ── Per-app release shell ────────────────────────────────────────────────────
+# Copy to .github/workflows/distribute-release.yml. Each product releases
+# INDEPENDENTLY via its own tag `<id>-v<X.Y.Z>` (e.g. `main-v2.13.0`). The
+# orchestrator parses the tag → the target product, validates the version
+# against that product's inline changelog, and builds + publishes just it.
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute Release
 
 on:
   push:
     tags:
-      - 'v*'           # matches v0.15, v0.15.1, v2.11.0, …
-      - '!v*-beta.*'   # exclude beta tags auto-pushed by distribute-beta.yml
-      - '!v*-alpha.*'  # exclude alpha tags pushed by distribute-alpha.yml (private invite builds)
+      - '*-v*'            # per-product release, e.g. main-v2.13.0 / companion-v1.4.0
+      - '!*-v*-beta.*'    # exclude auto-pushed betas
+      - '!*-v*-alpha.*'   # exclude manual alphas
 
 permissions:
-  contents: write       # for the GH Release + tag
-  discussions: write    # required for create-discussion (harmless when it's off)
+  contents: write
+  discussions: write     # required only for the opt-in create-discussion path
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.50
-    # `secrets: inherit` only works when the caller is in the same org/enterprise
-    # as workflows-macos (LeanBytes). Cross-account callers (e.g. consumers in a
-    # personal org) must pass secrets explicitly — `inherit` silently passes
-    # nothing across the boundary. The explicit list below works universally.
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.0
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
       PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-      # PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}   # only if has-finder-extension: true
-      # PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}       # only if has-quicklook-extension: true
-      # APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}          # only if build-app-store: true
-      # APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}            # only if build-app-store: true
-      # MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}            # only if build-app-store: true
-      # MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}              # only if build-app-store: true
-      # PROV_PROF_STORE_BASE64:         ${{ secrets.PROV_PROF_STORE_BASE64 }}          # only if build-app-store: true
-      # PROV_PROF_STORE_FINDER_BASE64:  ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}   # only if build-app-store + has-finder-extension
-      # PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}       # only if build-app-store + has-quicklook-extension
+      # PROV_PROF_DEVID_PRO_BASE64:   ${{ secrets.PROV_PROF_DEVID_PRO_BASE64 }}
+      # PROV_PROF_STORE_PRO_BASE64:   ${{ secrets.PROV_PROF_STORE_PRO_BASE64 }}
+      # APPLE_DISTR_P12_BASE64:       ${{ secrets.APPLE_DISTR_P12_BASE64 }}     # if any product builds App Store
+      # APPLE_DISTR_PASSWORD:         ${{ secrets.APPLE_DISTR_PASSWORD }}
+      # MAC_DISTR_P12_BASE64:         ${{ secrets.MAC_DISTR_P12_BASE64 }}
+      # MAC_DISTR_PASSWORD:           ${{ secrets.MAC_DISTR_PASSWORD }}
+      # PROV_PROF_STORE_BASE64:       ${{ secrets.PROV_PROF_STORE_BASE64 }}
       ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-      # SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}          # only if you fork workflows-macos private
-    with:
-      # ── Build toggles (default: build-direct=true, build-app-store=false) ─
-      # build-direct: false             # only set if you want to skip Direct
-      # build-app-store: true           # macpacker, filefillet
-
-      # ── Distribute toggles (default: distribute-stable-appcast=true) ────
-      # distribute-app-store: true      # macpacker, filefillet (altool → ASC)
-      # distribute-stable-appcast: false # set false only if no Sparkle
-
-      # ── Per-app build flags ─────────────────────────────────────────────
-      # use-tuist: true                # FlowMoose
-      # lfs: true                      # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
-      # has-finder-extension: true     # macpacker
-      # has-quicklook-extension: true  # macpacker
-      # extra-xcodebuild-args: ""
-
-      # ── Pre-build hooks (e.g. asset download) ──────────────────────────
-      # Example: FlowMoose downloading its Whisper model:
-      # pre-build-cache-path: FlowMoose/Models/ggml-base.bin
-      # pre-build-cache-key: whisper-base-model-v1
-      # pre-build-script: .ci/download-whisper-model.sh
-
-      # ── Runners ─────────────────────────────────────────────────────────
-      # runs-on-build: '["self-hosted","agent-alex"]'   # FlowMoose
-      # runs-on-publish: '["self-hosted","agent-alex"]' # FlowMoose
-
-      # ── Changelog.json (default: Config/Changelog.json) ─────────────────
-      # changelog-path: Config/Changelog.json
-
-      # ── Build configuration overrides (each default: "Release") ───────
-      # Set these only if your .xcodeproj has separate configs per channel
-      # (e.g. "Release" for Direct + "Release Store" for App Store).
-      # configuration-direct: Release
-      # configuration-app-store: Release Store
-
-      # ── GitHub Discussions (off by default) ─────────────────────────────
-      # Flip create-discussion to true to auto-open a discussion with the
-      # release's title under the named category. Prerequisites:
-      #   * Discussions enabled on the repo (Settings → Features → Discussions)
-      #   * A category exists with the EXACT name you pass (case-sensitive)
-      #   * The caller shell grants `discussions: write` in its permissions
-      # If any of those is wrong, `gh release create` fails atomically and
-      # the release object is NOT created. Test in a sandbox repo first.
-      # create-discussion: true
-      # discussion-category: Announcements
+    # with:
+    #   build-app-store: true            # default a product file inherits
+    #   distribute-app-store: true
+    #   use-tuist: true
+    #   runs-on-build: '["self-hosted","agent-alex"]'
+    #   create-discussion: true          # opt-in; needs Discussions + the exact category

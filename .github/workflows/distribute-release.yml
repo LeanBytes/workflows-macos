@@ -1,48 +1,36 @@
 # ── Release Distribution Orchestrator ────────────────────────────────────────
-# Called from a per-app shell triggered on tag push (vX.Y or vX.Y.Z, with
-# v*-beta.* excluded). The pushed tag's version must match versions[0].version
-# in Config/Changelog.json — validated in the prepare job; mismatch fails fast
-# before any build work.
+# Called from a per-app shell triggered on a per-product tag push
+# `<id>-v<X.Y.Z>` (e.g. `main-v2.13.0`), with beta/alpha variants excluded.
 #
-# Strict fail-safe publish order — the GH Release object is created LAST, so a
-# failed build never leaves a dangling release on the tag:
+# v0.4.0: products are DISCOVERED from Config/products/<id>.json (self-contained
+# per-product files, each with an inline changelog) and each product releases
+# INDEPENDENTLY. `products.py plan-release` parses the pushed tag → the single
+# target product, validates the version against THAT product's changelog, and
+# scopes the build + publish to it. Its DMG/ZIP + appcast + extracted
+# Changelog.json land under its own s3-subpath; a GitHub Release is created for
+# the tag.
 #
-#   1. Read release notes from Config/Changelog.json
-#   2. altool → ASC                  (if distribute-app-store)         ← GATE 1
-#   3. S3 upload of DMG/ZIP          (if build-direct; silent)
-#   4. S3 upload of Changelog.json   (if build-direct; the website reads it for the latest version)
-#   5. Stable appcast update + upload (if distribute-stable-appcast)   ← MAKES STABLE VISIBLE
-#   6. gh release create                                                ← visible
-#   7. gh release upload (DMG + ZIP)  attach assets to the release object
+# Strict fail-safe publish order — the GH Release is created LAST:
+#   1. Read notes from the product's inline changelog
+#   2. altool → ASC                  (if the product distributes App Store)   ← GATE 1
+#   3. S3 upload of DMG/ZIP          (silent)
+#   4. S3 upload of the product's Changelog.json (extracted from its file)
+#   5. Stable appcast update         (if the product distributes appcast)     ← visible
+#   6. gh release create             (for `<id>-v*`)
+#   7. gh release upload (DMG + ZIP)
 #
-# Toggles:
-#   build-direct                build the .app/DMG/ZIP   (default true)
-#   build-app-store             build the .pkg            (default false)
-#   distribute-app-store        altool → ASC              (default false; needs build-app-store)
-#   distribute-stable-appcast   Sparkle stable channel    (default true; needs build-direct)
-#
-# Optional inputs of note (see the inputs block for the full list):
-#   configuration-direct        Xcode config for the Direct archive    (default "Release")
-#   configuration-app-store     Xcode config for the App Store archive (default "Release")
-#   discussion-category         GH Discussions category for auto-created discussion (default: skip)
-#
-# Per-app shell example (drop into your repo at .github/workflows/distribute-release.yml):
+# Per-app shell (drop into your repo at .github/workflows/distribute-release.yml):
 #
 #   on:
 #     push:
 #       tags:
-#         - 'v*'
-#         - '!v*-beta.*'
+#         - '*-v*'
+#         - '!*-v*-beta.*'
+#         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.3.50
-#       with:
-#         build-app-store: true         # macpacker, filefillet
-#         distribute-app-store: true    # macpacker, filefillet
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.0
 #       secrets:
-#         # Pass each secret explicitly. `secrets: inherit` does not pass
-#         # secrets across org boundaries (e.g. sarensw/macpacker calling
-#         # LeanBytes/workflows-macos), so the explicit form is universal.
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,20 +39,24 @@ name: distribute-release
 on:
   workflow_call:
     inputs:
+      products-dir:
+        description: "Directory of per-product Config/products/<id>.json files."
+        type: string
+        default: "Config/products"
       build-direct:
-        description: "Build the Direct (.app/DMG/ZIP) artifact"
+        description: "Default build-direct for product files that omit it."
         type: boolean
         default: true
       build-app-store:
-        description: "Build the App Store (.pkg) artifact"
+        description: "Default build-app-store for product files that omit it."
         type: boolean
         default: false
       distribute-app-store:
-        description: "Upload .pkg to App Store Connect via altool. Requires build-app-store."
+        description: "Default distribute-app-store (altool → ASC) for files that omit it."
         type: boolean
         default: false
       distribute-stable-appcast:
-        description: "Update Sparkle's stable appcast with the Direct build. Requires build-direct."
+        description: "Default distribute-appcast (Sparkle stable channel) for files that omit it."
         type: boolean
         default: true
       use-tuist:
@@ -80,9 +72,11 @@ on:
         type: string
         default: ""
       has-finder-extension:
+        description: "Default has-finder for product files that omit it."
         type: boolean
         default: false
       has-quicklook-extension:
+        description: "Default has-quicklook for product files that omit it."
         type: boolean
         default: false
       extra-xcodebuild-args:
@@ -95,48 +89,39 @@ on:
         type: string
         default: '"macos-26"'
       lfs:
-        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
         default: false
       appcast-filename:
+        description: "Default appcast XML filename for files that omit it."
         type: string
         default: "appcast.xml"
       appcast-seed-path:
+        description: "Default seed appcast.xml path for files that omit it."
         type: string
         default: "Config/appcast.xml"
-      changelog-path:
-        description: "Path to Changelog.json in the caller repo (source for appcast description + GH Release body)"
-        type: string
-        default: "Config/Changelog.json"
       configuration-direct:
         description: "Xcode build configuration for the Direct archive. Default 'Release'."
         type: string
         default: "Release"
       configuration-app-store:
-        description: "Xcode build configuration for the App Store archive. Default 'Release'; set to e.g. 'Release Store' if your project uses a separate config for App Store builds."
+        description: "Xcode build configuration for the App Store archive. Default 'Release'."
         type: string
         default: "Release"
       create-discussion:
         description: |
-          Whether to auto-create a GitHub Discussion alongside the release.
-          OFF by default to keep the release flow simple — the discussion
-          creation path through `gh release create --discussion-category`
-          is fragile (depends on repo Discussions being enabled, an exact
-          category-name match, and `discussions: write` token scope) and a
-          failure here will abort the entire release. Turn it on only after
-          you've validated the setup in a sandbox repo.
+          Auto-create a GitHub Discussion alongside the release. OFF by default —
+          `gh release create --discussion-category` is a single atomic call, and
+          if the category lookup fails the WHOLE release create fails. Validate in
+          a sandbox before enabling.
         type: boolean
         default: false
       discussion-category:
-        description: |
-          GitHub Discussions category name to use when `create-discussion`
-          is true. Defaults to "Announcements" (GitHub's default category).
-          Ignored when `create-discussion` is false.
+        description: 'Discussions category name when create-discussion is true (default "Announcements").'
         type: string
         default: "Announcements"
     # Declared so cross-org / cross-account callers (where `secrets: inherit`
-    # silently passes nothing) can pass secrets explicitly. Same-org callers
-    # can keep using `secrets: inherit` — the declarations are no-ops for them.
+    # silently passes nothing) can pass secrets explicitly.
     secrets:
       DEVELOPER_ID_P12_BASE64:        { required: false }
       DEVELOPER_ID_PASSWORD:          { required: false }
@@ -144,6 +129,11 @@ on:
       PROV_PROF_DEVID_BASE64:         { required: false }
       PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
       PROV_PROF_DEVID_QL_BASE64:      { required: false }
+      # Per-product profiles: a product file names the secret via
+      # devid-profile-secret / store-profile-secret; unset falls back to the main
+      # PROV_PROF_*_BASE64. Add more as needed.
+      PROV_PROF_DEVID_PRO_BASE64:     { required: false }
+      PROV_PROF_STORE_PRO_BASE64:     { required: false }
       APPLE_DISTR_P12_BASE64:         { required: false }
       APPLE_DISTR_PASSWORD:           { required: false }
       MAC_DISTR_P12_BASE64:           { required: false }
@@ -160,143 +150,24 @@ on:
       SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
-  contents: write          # create GH Release + push tag + upload assets
-  # An explicit permissions block forces every UNLISTED scope to `none` — even
-  # when the caller grants it — so `discussions: write` MUST be declared here for
-  # the opt-in `create-discussion` path, or `gh release create --discussion-category`
-  # 404s ("Discussion could not be created"). Harmless (unused) when create-discussion
-  # is false. The caller's per-app shell must ALSO grant `discussions: write`.
-  discussions: write       # create the auto-discussion (create-discussion)
+  contents: write          # create GH Release + upload assets
+  discussions: write       # opt-in create-discussion
 
 jobs:
   prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.compute.outputs.version }}
-      build-number: ${{ steps.compute.outputs.build-number }}
-      artifact-label: ${{ steps.compute.outputs.artifact-label }}
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Compute + validate release version
-        id: compute
-        shell: bash
-        env:
-          CHANGELOG_PATH: ${{ inputs.changelog-path }}
-        run: |
-          set -euo pipefail
-
-          TAG="${{ github.ref_name }}"
-          # Accept 2-part (vX.Y) or 3-part (vX.Y.Z) semver. Apple's
-          # CFBundleShortVersionString spec allows either.
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "::error::Tag '$TAG' is not a bare semver release tag (expected vX.Y or vX.Y.Z)."
-            exit 1
-          fi
-          TAG_VERSION="${TAG#v}"
-
-          JSON_VERSION=$(python3 -c "
-          import json, sys
-          data = json.load(open('$CHANGELOG_PATH'))
-          versions = data.get('versions') or []
-          if not versions or 'version' not in versions[0]:
-              print('::error::$CHANGELOG_PATH has no versions[0].version', file=sys.stderr)
-              sys.exit(1)
-          print(versions[0]['version'])
-          ")
-
-          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
-            echo "::error::Tag '$TAG' (=$TAG_VERSION) does not match Config/Changelog.json versions[0].version (=$JSON_VERSION). Update Changelog.json to put $TAG_VERSION at versions[0] before tagging — or delete and re-tag once Changelog.json is correct."
-            exit 1
-          fi
-
-          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          ARTIFACT_LABEL="v${TAG_VERSION}"
-
-          echo "version=${TAG_VERSION}"         >> "$GITHUB_OUTPUT"
-          echo "build-number=${BUILD_NUMBER}"   >> "$GITHUB_OUTPUT"
-          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
-
-          echo "Release build prepared:"
-          echo "  Marketing version: ${TAG_VERSION}"
-          echo "  Build number:      ${BUILD_NUMBER}"
-          echo "  Artifact label:    ${ARTIFACT_LABEL}"
-
-  build-direct:
-    if: inputs.build-direct
-    needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.50
-    with:
-      version: ${{ needs.prepare.outputs.version }}
-      build-number: ${{ needs.prepare.outputs.build-number }}
-      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
-      use-tuist: ${{ inputs.use-tuist }}
-      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
-      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
-      pre-build-script: ${{ inputs.pre-build-script }}
-      has-finder-extension: ${{ inputs.has-finder-extension }}
-      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
-      runs-on: ${{ inputs.runs-on-build }}
-      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-      configuration: ${{ inputs.configuration-direct }}
-      lfs: ${{ inputs.lfs }}
-    # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
-    secrets:
-      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
-      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-      PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
-      PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
-      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
-      SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
-
-  build-app-store:
-    if: inputs.build-app-store
-    needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.3.50
-    with:
-      version: ${{ needs.prepare.outputs.version }}
-      build-number: ${{ needs.prepare.outputs.build-number }}
-      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
-      use-tuist: ${{ inputs.use-tuist }}
-      has-finder-extension: ${{ inputs.has-finder-extension }}
-      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
-      runs-on: ${{ inputs.runs-on-build }}
-      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-      configuration: ${{ inputs.configuration-app-store }}
-      lfs: ${{ inputs.lfs }}
-    # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
-    secrets:
-      APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
-      APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
-      MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}
-      MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}
-      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_STORE_BASE64:         ${{ secrets.PROV_PROF_STORE_BASE64 }}
-      PROV_PROF_STORE_FINDER_BASE64:  ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}
-      PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
-
-  publish-release:
-    needs: [prepare, build-direct, build-app-store]
-    # Tolerate skipped builds; require at least one to have succeeded.
-    if: |
-      always() &&
-      needs.build-direct.result != 'failure' &&
-      needs.build-app-store.result != 'failure' &&
-      (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
-    runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
-    timeout-minutes: 30
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
-      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      target-id: ${{ steps.plan.outputs.target-id }}
+      version: ${{ steps.plan.outputs.version }}
+      build-number: ${{ steps.plan.outputs.build-number }}
+      artifact-label: ${{ steps.plan.outputs.artifact-label }}
+      products: ${{ steps.plan.outputs.products }}
+      direct-products: ${{ steps.plan.outputs.direct-products }}
+      store-products: ${{ steps.plan.outputs.store-products }}
+      has-direct: ${{ steps.plan.outputs.has-direct }}
+      has-store: ${{ steps.plan.outputs.has-store }}
+      has-appcast: ${{ steps.plan.outputs.has-appcast }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -311,39 +182,180 @@ jobs:
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
-      - name: Download direct-build artifact
-        if: inputs.build-direct
+      - name: Plan release (parse <id>-v* tag → scoped product, validate vs its changelog)
+        id: plan
+        env:
+          PRODUCTS_DIR: ${{ inputs.products-dir }}
+          TAG: ${{ github.ref_name }}
+          DEF_BUILD_DIRECT: ${{ inputs.build-direct }}
+          DEF_BUILD_STORE: ${{ inputs.build-app-store }}
+          DEF_DIST_STORE: ${{ inputs.distribute-app-store }}
+          DEF_DIST_APPCAST: ${{ inputs.distribute-stable-appcast }}
+          DEF_HAS_FINDER: ${{ inputs.has-finder-extension }}
+          DEF_HAS_QL: ${{ inputs.has-quicklook-extension }}
+          DEF_APPCAST_FILENAME: ${{ inputs.appcast-filename }}
+          DEF_APPCAST_SEED: ${{ inputs.appcast-seed-path }}
+        run: python3 .shared-ci/.github/scripts/products.py plan-release >> "$GITHUB_OUTPUT"
+
+      - name: Show target
+        run: echo "Releasing '${{ steps.plan.outputs.target-id }}' v${{ steps.plan.outputs.version }} from tag '${{ github.ref_name }}'"
+
+  build-direct:
+    if: needs.prepare.outputs.has-direct == 'true'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.0
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      artifact-name: direct-build-${{ matrix.product.id }}
+      scheme-name: ${{ matrix.product.scheme }}
+      bundle-id: ${{ matrix.product.bundle-id }}
+      product-name: ${{ matrix.product.product-name }}
+      bundle-id-finder: ${{ matrix.product.bundle-id-finder }}
+      bundle-id-quicklook: ${{ matrix.product.bundle-id-quicklook }}
+      has-finder-extension: ${{ matrix.product.has-finder }}
+      has-quicklook-extension: ${{ matrix.product.has-quicklook }}
+      use-tuist: ${{ inputs.use-tuist }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-direct }}
+      lfs: ${{ inputs.lfs }}
+    secrets:
+      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_DEVID_BASE64:         ${{ matrix.product.devid-profile-secret != '' && secrets[matrix.product.devid-profile-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
+      PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
+      PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
+      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+
+  build-app-store:
+    if: needs.prepare.outputs.has-store == 'true'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.0
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      artifact-name: app-store-build-${{ matrix.product.id }}
+      scheme-name-store: ${{ matrix.product.scheme-store }}
+      bundle-id: ${{ matrix.product.bundle-id }}
+      bundle-id-store: ${{ matrix.product.bundle-id-store }}
+      bundle-id-finder: ${{ matrix.product.bundle-id-finder }}
+      bundle-id-finder-store: ${{ matrix.product.bundle-id-finder-store }}
+      bundle-id-quicklook: ${{ matrix.product.bundle-id-quicklook }}
+      bundle-id-quicklook-store: ${{ matrix.product.bundle-id-quicklook-store }}
+      has-finder-extension: ${{ matrix.product.has-finder }}
+      has-quicklook-extension: ${{ matrix.product.has-quicklook }}
+      use-tuist: ${{ inputs.use-tuist }}
+      runs-on: ${{ inputs.runs-on-build }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      configuration: ${{ inputs.configuration-app-store }}
+      lfs: ${{ inputs.lfs }}
+    secrets:
+      APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
+      APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
+      MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}
+      MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      PROV_PROF_STORE_BASE64:         ${{ matrix.product.store-profile-secret != '' && secrets[matrix.product.store-profile-secret] || secrets.PROV_PROF_STORE_BASE64 }}
+      PROV_PROF_STORE_FINDER_BASE64:  ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}
+      PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
+
+  publish-release:
+    needs: [prepare, build-direct, build-app-store]
+    if: |
+      always() &&
+      needs.build-direct.result != 'failure' &&
+      needs.build-app-store.result != 'failure' &&
+      (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
+    runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      PRODUCTS_JSON: ${{ needs.prepare.outputs.products }}
+      PRODUCTS_DIR: ${{ inputs.products-dir }}
+      TARGET_ID: ${{ needs.prepare.outputs.target-id }}
+    steps:
+      - name: Checkout caller repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      - name: Download direct-build artifacts
+        if: needs.build-direct.result == 'success'
         uses: actions/download-artifact@v8
         with:
-          name: direct-build
+          pattern: direct-build-*
           path: ./artifacts/direct
 
-      - name: Download app-store-build artifact
-        if: inputs.build-app-store
+      - name: Download app-store-build artifacts
+        if: needs.build-app-store.result == 'success'
         uses: actions/download-artifact@v8
         with:
-          name: app-store-build
+          pattern: app-store-build-*
           path: ./artifacts/app-store
 
-      # ── Read release notes from Changelog.json ────────────────────────────
-      # Curated, customer-facing notes from the caller's Changelog.json (same
-      # file the app reads for its What's New view). Feeds both the appcast
-      # description and the GH Release body downstream.
-      - name: Read release notes from Changelog.json
+      - name: Expand products
+        shell: bash
+        run: |
+          set -euo pipefail
+          # \x1f (Unit Separator), NOT tab — tab is IFS-whitespace and `read`
+          # would collapse empty fields (e.g. an empty s3-subpath), shifting
+          # every later column. \x1f is non-whitespace and never in the data.
+          python3 - "$PRODUCTS_JSON" > /tmp/products.tsv <<'PY'
+          import json, sys
+          fields = ["id","product-name","s3-subpath","appcast-filename","appcast-seed-path",
+                    "changelog-product","build-direct","build-app-store",
+                    "distribute-app-store","distribute-appcast"]
+          for p in json.loads(sys.argv[1]):
+              print("\x1f".join(str(p.get(k, "")) for k in fields))
+          PY
+          echo "Products:"; tr '\037' '\t' < /tmp/products.tsv
+
+      # ── Release notes from the (single) target product's inline changelog ──
+      - name: Read release notes from the product changelog
         shell: bash
         env:
-          CHANGELOG_PATH: ${{ inputs.changelog-path }}
           MARKETING_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          CHANGELOG_PATH="$CHANGELOG_PATH" VERSION="$MARKETING_VERSION" \
-            .shared-ci/.github/scripts/changelog-from-json.sh > /tmp/notes.md
-          echo "Notes written ($(wc -c < /tmp/notes.md) bytes)"
-          cat /tmp/notes.md
+          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            CHANGELOG_PATH="${PRODUCTS_DIR}/$id.json" VERSION="$MARKETING_VERSION" \
+              .shared-ci/.github/scripts/changelog-from-json.sh > "/tmp/notes-$id.md" || true
+          done < /tmp/products.tsv
+          # Per-product release → the target product's notes drive the GH body.
+          cp "/tmp/notes-${TARGET_ID}.md" /tmp/notes.md 2>/dev/null || : > /tmp/notes.md
+          echo "Notes ($(wc -c < /tmp/notes.md) bytes):"; cat /tmp/notes.md
 
       # ── GATE 1: App Store upload ──────────────────────────────────────────
       - name: Install App Store Connect API key (for altool)
-        if: inputs.build-app-store && inputs.distribute-app-store
+        if: needs.build-app-store.result == 'success'
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -354,57 +366,38 @@ jobs:
           echo "$ASC_KEY_BASE64" | base64 --decode \
             > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
-      - name: Upload to App Store Connect
-        if: inputs.build-app-store && inputs.distribute-app-store
+      - name: Upload to App Store Connect (per product)
+        if: needs.build-app-store.result == 'success'
         shell: bash
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -uo pipefail
-          PKG=$(ls ./artifacts/app-store/*.pkg | head -1)
-          [ -f "$PKG" ] || { echo "::error::No .pkg in app-store artifact"; exit 1; }
+          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            { [ "$bas" = "True" ] && [ "$das" = "True" ]; } || continue
+            echo "::group::App Store upload — product=$id"
+            PKG=$(ls ./artifacts/app-store/app-store-build-$id/*.pkg 2>/dev/null | head -1 || true)
+            if [ -z "$PKG" ] || [ ! -f "$PKG" ]; then
+              echo "::error::No .pkg for product $id"; echo "::endgroup::"; exit 1
+            fi
+            set +e
+            OUTPUT=$(xcrun altool --upload-app --type macos --file "$PKG" \
+              --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1)
+            RC=$?
+            set -e
+            echo "$OUTPUT"
+            if grep -qE "UPLOAD SUCCEEDED|No errors uploading" <<<"$OUTPUT"; then
+              echo "App Store upload accepted for $id"; echo "::endgroup::"; continue
+            fi
+            if grep -qiE "already been (used|uploaded)|redundant binary upload|ITMS-90189" <<<"$OUTPUT"; then
+              echo "Build for $id already present — treating as success."; echo "::endgroup::"; continue
+            fi
+            echo "::error::altool failed for $id (exit ${RC})"; echo "::endgroup::"; exit 1
+          done < /tmp/products.tsv
 
-          # altool exits 0 even on some upload failures, so decide success on its
-          # POSITIVE terminal marker (UPLOAD SUCCEEDED) — NOT on the absence of an
-          # "ERROR:" line. App Store Connect can return a transient 5xx that altool
-          # logs as "ERROR: … status code 500" and then retries + recovers; that
-          # recovered line must not fail the job (it used to — a false failure on a
-          # successful upload).
-          # NB: GitHub runs this step as `bash -e` (errexit), and the
-          # `set -uo pipefail` above does NOT clear it. A naked
-          # `OUTPUT=$(altool ...)` capture would abort the whole step the instant
-          # altool exits non-zero — before RC, the echo, or any decision below
-          # runs (a recovered transient 5xx and an "already uploaded" re-run both
-          # exit non-zero too). Drop errexit just around the capture so the
-          # text-marker decision logic always runs.
-          set +e
-          OUTPUT=$(xcrun altool --upload-app \
-            --type macos \
-            --file "$PKG" \
-            --apiKey "$ASC_KEY_ID" \
-            --apiIssuer "$ASC_ISSUER_ID" 2>&1)
-          RC=$?
-          set -e
-          echo "$OUTPUT"
-
-          if grep -qE "UPLOAD SUCCEEDED|No errors uploading" <<<"$OUTPUT"; then
-            echo "App Store Connect upload accepted: $(basename "$PKG")"
-            exit 0
-          fi
-
-          # A re-run where the build is already in App Store Connect is not a failure.
-          if grep -qiE "already been (used|uploaded)|redundant binary upload|ITMS-90189" <<<"$OUTPUT"; then
-            echo "Build already present in App Store Connect — treating as success."
-            exit 0
-          fi
-
-          echo "::error::altool reported failure on App Store Connect upload (exit ${RC})"
-          exit 1
-
-      # ── S3 upload of DMG/ZIP (still silent — appcast hasn't moved) ────────
       - name: Install AWS CLI
-        if: inputs.build-direct
+        if: needs.build-direct.result == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -415,8 +408,8 @@ jobs:
           fi
           aws --version
 
-      - name: Upload DMG + ZIP to S3
-        if: inputs.build-direct
+      - name: Upload DMG + ZIP to S3 (per product)
+        if: needs.build-direct.result == 'success'
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -425,35 +418,43 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          for f in ./artifacts/direct/*.dmg ./artifacts/direct/*.zip; do
-            [ -e "$f" ] || continue
-            BASENAME=$(basename "$f")
-            aws s3 cp "$f" "${S3_DISTRIBUTION_PATH}/${BASENAME}"
-            echo "Uploaded ${BASENAME}"
-          done
+          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            [ "$bd" = "True" ] || continue
+            echo "::group::S3 upload — product=$id"
+            DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
+            for f in ./artifacts/direct/direct-build-$id/*.dmg ./artifacts/direct/direct-build-$id/*.zip; do
+              [ -e "$f" ] || continue
+              aws s3 cp "$f" "${DEST}/$(basename "$f")"
+              echo "Uploaded $(basename "$f") → ${DEST}/"
+            done
+            echo "::endgroup::"
+          done < /tmp/products.tsv
 
-      # ── Changelog.json → S3 (the website reads this for the latest version) ─
-      - name: Upload Changelog.json to S3
-        if: inputs.build-direct
+      # ── Changelog.json → S3, extracted from the product's inline changelog ─
+      - name: Upload Changelog.json to S3 (per product)
+        if: needs.build-direct.result == 'success'
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: "eu-central-1"
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
-          CHANGELOG_PATH: ${{ inputs.changelog-path }}
         run: |
           set -euo pipefail
-          # On a release, Changelog.json versions[0] is the version just tagged,
-          # so the website can read the latest released version + notes from S3.
-          BASENAME=$(basename "$CHANGELOG_PATH")
-          aws s3 cp "$CHANGELOG_PATH" "${S3_DISTRIBUTION_PATH}/${BASENAME}" \
-            --content-type "application/json"
-          echo "Uploaded ${BASENAME}"
+          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            [ "$bd" = "True" ] || continue
+            # Publish ONLY the product's .changelog (schema-identical to the old
+            # Changelog.json) — never the build identity in the product file.
+            python3 -c 'import json,sys; json.dump(json.load(open(sys.argv[1]))["changelog"], open(sys.argv[2],"w"))' \
+              "${PRODUCTS_DIR}/$id.json" "/tmp/cl-$id.json"
+            DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
+            aws s3 cp "/tmp/cl-$id.json" "${DEST}/Changelog.json" --content-type "application/json"
+            echo "Uploaded Changelog.json → ${DEST}/"
+          done < /tmp/products.tsv
 
-      # ── GATE 2: Stable appcast update + upload ────────────────────────────
+      # ── GATE 2: Stable appcast update ─────────────────────────────────────
       - name: Download Sparkle
-        if: inputs.build-direct && inputs.distribute-stable-appcast
+        if: needs.prepare.outputs.has-appcast == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -467,75 +468,41 @@ jobs:
           tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
           chmod +x /tmp/sparkle/bin/generate_appcast
 
-      - name: Prepare appcast workdir
-        if: inputs.build-direct && inputs.distribute-stable-appcast
+      - name: Update Sparkle stable appcast (per product)
+        if: needs.prepare.outputs.has-appcast == 'true'
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: "eu-central-1"
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
-          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
-          APPCAST_SEED_PATH: ${{ inputs.appcast-seed-path }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/appcast-work
-          cp ./artifacts/direct/*.zip /tmp/appcast-work/
-
-          if aws s3 cp "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" "/tmp/appcast-work/${APPCAST_FILENAME}"; then
-            echo "Downloaded existing ${APPCAST_FILENAME} from S3"
-          else
-            echo "No ${APPCAST_FILENAME} on S3, using seed: ${APPCAST_SEED_PATH}"
-            cp "${APPCAST_SEED_PATH}" "/tmp/appcast-work/${APPCAST_FILENAME}"
-          fi
-
-      - name: Run generate_appcast (stable channel)
-        if: inputs.build-direct && inputs.distribute-stable-appcast
-        shell: bash
-        env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          # No --channel flag → stable channel (default).
-          echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast \
-            --ed-key-file - \
-            /tmp/appcast-work/
+          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            { [ "$bd" = "True" ] && [ "$dap" = "True" ]; } || continue
+            echo "::group::Stable appcast — product=$id"
+            WORK="/tmp/appcast-$id"
+            mkdir -p "$WORK"
+            cp ./artifacts/direct/direct-build-$id/*.zip "$WORK"/
+            DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
+            if aws s3 cp "${DEST}/${afile}" "${WORK}/${afile}"; then
+              echo "Downloaded existing ${afile}"
+            else
+              echo "No ${afile} on S3, seeding from ${aseed}"
+              cp "${aseed}" "${WORK}/${afile}"
+            fi
+            echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast --ed-key-file - "${WORK}/"
+            NOTES=""
+            [ -f "/tmp/notes-$id.md" ] && NOTES=$(cat "/tmp/notes-$id.md")
+            VERSION="$VERSION" NOTES="$NOTES" APPCAST_PATH="${WORK}/${afile}" \
+              .shared-ci/.github/scripts/update-appcast.sh
+            aws s3 cp "${WORK}/${afile}" "${DEST}/${afile}" --content-type "application/xml"
+            echo "Uploaded ${afile} → ${DEST}/ (stable live for $id)"
+            echo "::endgroup::"
+          done < /tmp/products.tsv
 
-      - name: Inject release notes into appcast item
-        if: inputs.build-direct && inputs.distribute-stable-appcast
-        shell: bash
-        env:
-          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
-        run: |
-          set -euo pipefail
-          NOTES=""
-          if [ -f /tmp/notes.md ]; then
-            NOTES=$(cat /tmp/notes.md)
-          fi
-
-          # Match by marketing version — stable items have unique versions.
-          VERSION="$VERSION" \
-          NOTES="$NOTES" \
-          APPCAST_PATH="/tmp/appcast-work/${APPCAST_FILENAME}" \
-          .shared-ci/.github/scripts/update-appcast.sh
-
-      - name: Upload appcast.xml to S3
-        if: inputs.build-direct && inputs.distribute-stable-appcast
-        shell: bash
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: "eu-central-1"
-          S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
-          APPCAST_FILENAME: ${{ inputs.appcast-filename }}
-        run: |
-          set -euo pipefail
-          aws s3 cp "/tmp/appcast-work/${APPCAST_FILENAME}" \
-            "${S3_DISTRIBUTION_PATH}/${APPCAST_FILENAME}" \
-            --content-type "application/xml"
-          echo "Uploaded ${APPCAST_FILENAME} → S3 (stable channel now live)"
-
-      # ── FINAL: GitHub Release ─────────────────────────────────────────────
+      # ── FINAL: GitHub Release for `<id>-v*` ───────────────────────────────
       - name: Create GitHub Release
         shell: bash
         env:
@@ -544,45 +511,56 @@ jobs:
           DISCUSSION_CATEGORY: ${{ inputs.discussion-category }}
         run: |
           set -euo pipefail
-
           ARGS=(--repo "${{ github.repository }}" --title "${{ github.ref_name }}")
-
-          if [ -f /tmp/notes.md ]; then
+          if [ -f /tmp/notes.md ] && [ -s /tmp/notes.md ]; then
             ARGS+=(--notes-file /tmp/notes.md)
           else
-            ARGS+=(--notes "Release ${ARTIFACT_LABEL}")
+            ARGS+=(--notes "Release ${{ github.ref_name }}")
           fi
-
-          # Discussion creation is opt-in. `gh release create --discussion-category`
-          # is a single atomic call: if the category lookup / discussions API errors
-          # for any reason, the WHOLE release create fails and the tag has no
-          # release object. Keep this off by default; flip on per-consumer once
-          # you've validated the Discussions setup works end-to-end.
           if [ "$CREATE_DISCUSSION" = "true" ] && [ -n "$DISCUSSION_CATEGORY" ]; then
             ARGS+=(--discussion-category "$DISCUSSION_CATEGORY")
           fi
-
           gh release create "${{ github.ref_name }}" "${ARGS[@]}"
 
-      # ── Attach DMG + ZIP to the GH Release ────────────────────────────────
-      # Lets anyone browsing the repo's Releases tab download the build
-      # directly, in addition to the Sparkle stable channel and S3.
       - name: Attach DMG + ZIP to GH Release
-        if: inputs.build-direct && needs.build-direct.result == 'success'
+        if: needs.build-direct.result == 'success'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release upload "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --clobber \
-            ./artifacts/direct/*.dmg \
-            ./artifacts/direct/*.zip
+          shopt -s nullglob
+          ASSETS=( ./artifacts/direct/direct-build-*/*.dmg ./artifacts/direct/direct-build-*/*.zip )
+          if [ ${#ASSETS[@]} -eq 0 ]; then
+            echo "No DMG/ZIP assets to attach"; exit 0
+          fi
+          gh release upload "${{ github.ref_name }}" --repo "${{ github.repository }}" --clobber "${ASSETS[@]}"
+
+      - name: Write release summary
+        if: needs.build-direct.result == 'success'
+        shell: bash
+        env:
+          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release ${{ github.ref_name }} published ✅"
+            echo
+            echo "**Product:** \`${TARGET_ID}\` · **Version:** \`${VERSION}\` · **Build:** \`${BUILD_NUMBER}\`"
+            echo
+            echo "| Artifact | Download |"
+            echo "|---|---|"
+            while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+              [ "$bd" = "True" ] || continue
+              BASE="${S3_DOWNLOAD_URL}${sub:+/$sub}"
+              echo "| DMG | [${pname}_${ARTIFACT_LABEL}.dmg](${BASE}/${pname}_${ARTIFACT_LABEL}.dmg) |"
+              echo "| ZIP | [${pname}_${ARTIFACT_LABEL}.zip](${BASE}/${pname}_${ARTIFACT_LABEL}.zip) |"
+            done < /tmp/products.tsv
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
         shell: bash
         run: |
-          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-work /tmp/notes.md
+          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-* /tmp/notes.md /tmp/notes-*.md /tmp/cl-*.json /tmp/products.tsv
           rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8

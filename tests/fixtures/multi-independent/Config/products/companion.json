@@ -1,0 +1,17 @@
+{
+  "id": "companion",
+  "platform": "ios",
+  "scheme-store": "Companion",
+  "bundle-id": "com.example.companion",
+  "build-direct": false,
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": false,
+  "s3-subpath": "companion",
+  "store-profile-secret": "PROV_PROF_STORE_COMPANION_BASE64",
+  "changelog": {
+    "versions": [
+      { "version": "1.3.0", "items": [ { "type": "feat", "title": { "en": "CarPlay: recent transcripts" } } ] }
+    ]
+  }
+}

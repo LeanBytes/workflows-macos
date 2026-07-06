@@ -1,0 +1,20 @@
+{
+  "id": "main",
+  "platform": "macos",
+  "scheme": "MainApp",
+  "product-name": "MainApp",
+  "bundle-id": "com.example.mainapp",
+  "scheme-store": "MainApp",
+  "build-direct": true,
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "",
+  "changelog": {
+    "comingNext": { "en": "next up" },
+    "versions": [
+      { "version": "2.14.0", "items": [ { "type": "feat", "title": { "en": "Main app new thing" } } ] },
+      { "version": "2.13.0", "items": [ { "type": "fix", "title": { "en": "old fix" } } ] }
+    ]
+  }
+}

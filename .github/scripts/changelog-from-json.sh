@@ -11,6 +11,11 @@
 #                     sentinel "NEXT" to use `versions[0]` (the
 #                     in-progress entry the developer is curating).
 #                     Required.
+#   PRODUCT           Optional per-product filter (e.g. "base", "pro").
+#                     When set, items carrying a non-empty `products`
+#                     array that does not list PRODUCT are dropped; items
+#                     with no `products` apply to every product. Unset
+#                     (single-product callers) → no filtering.
 #
 # Output: Markdown on stdout. Bucketed into:
 #     ### New Features    (type: feat)
@@ -33,16 +38,23 @@ if [ ! -f "$CHANGELOG_PATH" ]; then
   exit 1
 fi
 
-CHANGELOG_PATH="$CHANGELOG_PATH" VERSION="$VERSION" python3 <<'PY'
+CHANGELOG_PATH="$CHANGELOG_PATH" VERSION="$VERSION" PRODUCT="${PRODUCT:-}" python3 <<'PY'
 import json
 import os
 import sys
 
 path = os.environ["CHANGELOG_PATH"]
 version = os.environ["VERSION"]
+product = os.environ.get("PRODUCT", "").strip()
 
 with open(path, "r", encoding="utf-8") as fh:
     data = json.load(fh)
+
+# Accept a per-product product.json directly (v0.4.0): descend into its inline
+# .changelog. A plain Changelog.json has top-level "versions"; a product.json
+# nests the same schema under "changelog".
+if "versions" not in data and isinstance(data.get("changelog"), dict):
+    data = data["changelog"]
 
 versions = data.get("versions") or []
 
@@ -74,6 +86,13 @@ SECTIONS = [
 
 buckets = {label: [] for label, _ in SECTIONS}
 for item in target.get("items") or []:
+    # Optional per-product filter: when PRODUCT is set, drop items whose
+    # `products` array is present, non-empty, and does not list PRODUCT.
+    # An absent/empty `products` means "applies to every product". When
+    # PRODUCT is unset (single-product callers), no filtering happens.
+    prods = item.get("products")
+    if product and isinstance(prods, list) and prods and product not in prods:
+        continue
     title = ((item.get("title") or {}).get("en") or "").strip()
     if not title:
         continue

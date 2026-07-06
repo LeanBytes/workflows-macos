@@ -1,8 +1,7 @@
-# ── Per-app PR distribution shell ────────────────────────────────────────────
-# Copy into each app repo at .github/workflows/distribute-pr.yml.
-# PR builds are intentionally lightweight: changelog safeguard + compile-only.
-# No signing, no S3, no PR comment. Beta and release workflows do the heavy
-# lifting on merged PRs and tagged releases.
+# ── Per-app PR shell ─────────────────────────────────────────────────────────
+# Copy to .github/workflows/distribute-pr.yml. Trigger-only: the orchestrator
+# discovers every Config/products/<id>.json and compiles each one. Fork-PR safe
+# (the product files ship with the checkout).
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute PR
 
@@ -15,41 +14,15 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.3.50
-    with:
-      # ── Scheme name (literal, required for fork-PR support) ────────────
-      # GitHub strips `vars.*` from fork-PR workflow runs, so a vars-based
-      # scheme name would resolve to empty. Hardcode here as a literal
-      # string. Same-repo-only consumers can omit this and the workflow
-      # falls back to `vars.SCHEME_NAME`.
-      scheme-name: MyAppScheme
-
-      # ── Optional per-app inputs (uncomment what applies) ────────────────
-      # use-tuist: true                # FlowMoose
-      # lfs: true                      # set if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
-      # runs-on-build: '["self-hosted","agent-alex"]'  # FlowMoose self-hosted
-      # extra-xcodebuild-args: ""
-
-      # ── Pre-build hooks (e.g. asset download) ──────────────────────────
-      # Caller's script runs on the build runner before xcodebuild.
-      # pre-build-cache-path: Models/asset.bin
-      # pre-build-cache-key: asset-v1
-      # pre-build-script: .ci/download-asset.sh
-
-      # ── Changelog.json (default: Config/Changelog.json) ─────────────────
-      # changelog-path: Config/Changelog.json
-
-      # ── Build configuration override (default: "Release") ─────────────
-      # configuration-direct: Release
-
-      # ── Tests on PR (opt-in; failure = red check, no Jira ticket) ──────
-      # Replaces the compile-only check with a build + test run.
-      # run-tests: true
-      # test-runner: both              # xcodebuild | swift | both
-      # test-scheme: MyAppScheme       # defaults to scheme-name
-      # swift-package-path: Core       # the core internal Swift package (Package.swift dir)
-      # coverage-min: "70"             # fail below 70% swift line coverage
-      # test-plan: ""                  # an .xctestplan name, if you use one
-      # xcodebuild-test-args: ""
-    # secrets:                          # only when consuming a PRIVATE fork of workflows-macos
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.0
+    # ── Optional inputs (uncomment what applies) ────────────────────────────
+    # with:
+    #   use-tuist: true                                 # FlowMoose
+    #   lfs: true                                       # an LFS-tracked build input
+    #   runs-on-build: '["self-hosted","agent-alex"]'
+    #   run-tests: true                                 # build + test instead of compile-only
+    #   test-runner: both
+    #   swift-package-path: Core
+    #   coverage-min: "70"
+    # secrets:                                          # only for a PRIVATE fork of workflows-macos
     #   SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}

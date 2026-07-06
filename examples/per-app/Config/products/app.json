@@ -1,0 +1,19 @@
+{
+  "id": "app",
+  "platform": "macos",
+  "scheme": "MyApp",
+  "product-name": "MyApp",
+  "bundle-id": "com.example.myapp",
+  "scheme-store": "MyApp",
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "",
+  "appcast-seed-path": "Config/appcast.xml",
+  "changelog": {
+    "comingNext": { "en": "" },
+    "versions": [
+      { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "Initial release" } } ] }
+    ]
+  }
+}

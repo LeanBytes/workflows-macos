@@ -1,6 +1,7 @@
 # ── Internal Build Callee — Direct Distribution ──────────────────────────────
 # Produces a notarized, stapled .app packaged as DMG + ZIP, uploaded as a
-# GitHub Actions workflow artifact named "direct-build". An orchestrator
+# GitHub Actions workflow artifact (named by the artifact-name input; default
+# "direct-build"). An orchestrator
 # (distribute-pr/beta/release.yml) downloads the artifact and decides what
 # to do with it (S3, appcast, GH release).
 #
@@ -22,12 +23,13 @@
 #   PROV_PROF_DEVID_BASE64   — main Developer ID provisioning profile
 #   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64  — ASC API key for notarization
 #
-# Required caller vars:
-#   SCHEME_NAME, BUNDLE_ID, PRODUCT_NAME
+# Required caller inputs (v0.4.0 — product identity comes from the caller's
+# product list, no longer from repo vars):
+#   scheme-name, bundle-id, product-name
 #
 # Optional (gated by inputs):
-#   has-finder-extension     → PROV_PROF_DEVID_FINDER_BASE64, vars.BUNDLE_ID_FINDER
-#   has-quicklook-extension  → PROV_PROF_DEVID_QL_BASE64,     vars.BUNDLE_ID_QUICKLOOK
+#   has-finder-extension     → PROV_PROF_DEVID_FINDER_BASE64, bundle-id-finder
+#   has-quicklook-extension  → PROV_PROF_DEVID_QL_BASE64,     bundle-id-quicklook
 #   SHARED_WORKFLOWS_TOKEN   → only when consuming a PRIVATE fork of workflows-macos
 #                              (the shared-scripts checkout falls back to github.token)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +51,32 @@ on:
         description: "Label for artifact filenames (e.g. '1.3.0' or 'build-260406143022')"
         required: true
         type: string
+
+      # ── Product identity (v0.4.0: supplied by the caller's product list) ─────
+      scheme-name:
+        description: "Xcode scheme to archive."
+        required: true
+        type: string
+      bundle-id:
+        description: "App bundle identifier (used as the provisioning-profile key)."
+        required: true
+        type: string
+      product-name:
+        description: "Product name — drives the .app name and the DMG/ZIP filenames."
+        required: true
+        type: string
+      bundle-id-finder:
+        description: "Finder Sync extension bundle id (used only when has-finder-extension)."
+        type: string
+        default: ""
+      bundle-id-quicklook:
+        description: "Quick Look extension bundle id (used only when has-quicklook-extension)."
+        type: string
+        default: ""
+      artifact-name:
+        description: "GH Actions artifact name for the DMG+ZIP upload. Suffix per product to avoid matrix collisions."
+        type: string
+        default: "direct-build"
 
       # ── Runner ─────────────────────────────────────────────────────────────
       runs-on:
@@ -86,11 +114,11 @@ on:
 
       # ── Extensions ─────────────────────────────────────────────────────────
       has-finder-extension:
-        description: "App has a Finder Sync extension. Expects PROV_PROF_DEVID_FINDER_BASE64 secret + vars.BUNDLE_ID_FINDER."
+        description: "App has a Finder Sync extension. Expects PROV_PROF_DEVID_FINDER_BASE64 secret + the bundle-id-finder input."
         type: boolean
         default: false
       has-quicklook-extension:
-        description: "App has a Quick Look extension. Expects PROV_PROF_DEVID_QL_BASE64 secret + vars.BUNDLE_ID_QUICKLOOK."
+        description: "App has a Quick Look extension. Expects PROV_PROF_DEVID_QL_BASE64 secret + the bundle-id-quicklook input."
         type: boolean
         default: false
 
@@ -140,11 +168,11 @@ jobs:
       VERSION: ${{ inputs.version }}
       BUILD_NUMBER: ${{ inputs.build-number }}
       ARTIFACT_LABEL: ${{ inputs.artifact-label }}
-      SCHEME_NAME: ${{ vars.SCHEME_NAME }}
-      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
-      PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
-      BUNDLE_ID_FINDER: ${{ vars.BUNDLE_ID_FINDER }}
-      BUNDLE_ID_QUICKLOOK: ${{ vars.BUNDLE_ID_QUICKLOOK }}
+      SCHEME_NAME: ${{ inputs.scheme-name }}
+      BUNDLE_ID: ${{ inputs.bundle-id }}
+      PRODUCT_NAME: ${{ inputs.product-name }}
+      BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
+      BUNDLE_ID_QUICKLOOK: ${{ inputs.bundle-id-quicklook }}
       USE_TUIST: ${{ inputs.use-tuist }}
       CONFIGURATION: ${{ inputs.configuration }}
       EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
@@ -232,7 +260,7 @@ jobs:
       - name: Upload DMG + ZIP as workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: direct-build
+          name: ${{ inputs.artifact-name }}
           path: |
             /tmp/build/*.dmg
             /tmp/build/*.zip

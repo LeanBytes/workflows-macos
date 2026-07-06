@@ -13,7 +13,8 @@
 # Semantics: a failing test (or a coverage-gate miss, or an infra error) → job
 # FAILS. On failure, optionally file a Jira ticket (into the active sprint).
 #
-# Required caller vars (for the xcodebuild runner): SCHEME_NAME (or input test-scheme).
+# Required caller input (for the xcodebuild runner): test-scheme (v0.4.0 — the
+# caller supplies the scheme, e.g. from its product list; no repo-var fallback).
 # Optional vars (only when file-jira-on-failure): JIRA_BASE_URL, JIRA_PROJECT_KEY,
 #   JIRA_USER_EMAIL, JIRA_ISSUE_TYPE, JIRA_BOARD_ID.
 # Optional secrets: JIRA_API_TOKEN (when file-jira-on-failure), SHARED_WORKFLOWS_TOKEN
@@ -42,7 +43,7 @@ on:
 
       # ── xcodebuild runner (the app/UI scheme) ──────────────────────────────
       test-scheme:
-        description: "Scheme to test. Defaults to the SCHEME_NAME repo var."
+        description: "Scheme to test. Required for the xcodebuild runner — the caller passes it (e.g. from its product list). Not needed for the swift-only runner."
         type: string
         default: ""
       test-plan:
@@ -61,7 +62,7 @@ on:
         type: string
         default: ""
       app-name:
-        description: "App name for the report/ticket. Defaults to the PRODUCT_NAME repo var, else the scheme."
+        description: "App name for the report/ticket. Defaults to the test scheme when empty."
         type: string
         default: ""
 
@@ -161,9 +162,9 @@ jobs:
       CONFIGURATION: ${{ inputs.configuration }}
       USE_TUIST: ${{ inputs.use-tuist }}
       EXTRA_ARGS: ${{ inputs.xcodebuild-test-args }}
-      TEST_SCHEME: ${{ inputs.test-scheme || vars.SCHEME_NAME }}
+      TEST_SCHEME: ${{ inputs.test-scheme }}
       TEST_PLAN: ${{ inputs.test-plan }}
-      APP_NAME: ${{ inputs.app-name || vars.PRODUCT_NAME }}
+      APP_NAME: ${{ inputs.app-name }}
       SWIFT_PACKAGE_PATH: ${{ inputs.swift-package-path }}
       SWIFT_TEST_FILTER: ${{ inputs.swift-test-filter }}
       COVERAGE_MIN: ${{ inputs.coverage-min }}

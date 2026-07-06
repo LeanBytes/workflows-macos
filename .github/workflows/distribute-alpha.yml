@@ -1,27 +1,29 @@
 # ── Alpha (invite-only) Distribution Orchestrator ────────────────────────────
 # Called from a per-app shell triggered MANUALLY (workflow_dispatch), run against
 # a feature branch (e.g. a "3.0" / "v3" branch). Cuts a signed + notarized Direct
-# build and hands it out PRIVATELY — it is deliberately OFF the public machinery:
+# build and hands it out PRIVATELY — deliberately OFF the public machinery:
 #
 #   * NO Sparkle appcast update      (invitees get the build by hand, not auto-update)
 #   * NO Changelog.json write/upload (the changelog/website are untouched)
 #   * NO GitHub Release object       (only an unlisted S3 URL + a git tag)
 #
-# Think of it as "cut a private release out of this branch." The artifact is built
-# byte-for-byte like a real release (Developer ID signed, notarytool-notarized,
-# stapled) so it runs cleanly on an invitee's Mac without Gatekeeper warnings —
-# only the DISTRIBUTION is private.
+# The artifact is built byte-for-byte like a real release (Developer ID signed,
+# notarytool-notarized, stapled) so it runs cleanly on an invitee's Mac — only
+# the DISTRIBUTION is private.
 #
-# Identity: `<base>-alpha.<N>` (e.g. 3.0.0-alpha.1).
-#   * <base> is read from the branch's Changelog.json versions[0].version
-#     (READ-ONLY — alphas are never written back), or the `version-base` input.
-#   * <N> is counted from existing `v<base>-alpha.*` git tags — exactly like the
-#     beta counter. The tag IS the durable record + the next-run counter, and
-#     pins the exact commit handed out. No S3 meta-file needed.
+# Identity + base version: pass **`product-id`** to source both from
+# `Config/products/<id>.json` (the v0.4.0 source of truth) — its
+# `changelog.versions[0].version` is the base, its scheme/bundle-id/etc. drive
+# the build, and the tag is **`<id>-v<base>-alpha.<N>`**. For a repo without
+# product files, pass `scheme`/`bundle-id`/`product-name` directly instead and
+# the tag is the legacy `v<base>-alpha.<N>`.
+#   * <base> may be overridden with `version-base`.
+#   * <N> counts existing `<prefix><base>-alpha.*` tags — the tag IS the durable
+#     record + next-run counter and pins the exact commit handed out.
 #
-# IMPORTANT — the alpha tag must NOT fire the release flow. Add `!v*-alpha.*` to
-# your per-app distribute-release.yml tag filter (mirrors the existing
-# `!v*-beta.*`), or the `v<base>-alpha.<N>` tag push triggers a real release.
+# IMPORTANT — the alpha tag must NOT fire the release flow. Your per-app
+# distribute-release.yml tag filter must exclude `!*-v*-alpha.*` (it already
+# excludes betas), or the tag push triggers a real release.
 #
 # Per-app shell example:
 #
@@ -29,7 +31,9 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.3.50
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.0
+#       with:
+#         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
 #         # … Direct subset only (no Sparkle key, no App Store secrets)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -38,21 +42,55 @@ name: distribute-alpha
 on:
   workflow_call:
     inputs:
+      product-id:
+        description: "Product id → sources identity + base version from Config/products/<id>.json, tags <id>-v<base>-alpha.N. Empty = use the scheme/bundle-id/product-name inputs (legacy v<base>-alpha.N)."
+        type: string
+        default: ""
+      products-dir:
+        description: "Directory of per-product Config/products/<id>.json files (used with product-id)."
+        type: string
+        default: "Config/products"
       version-base:
-        description: "Base version for the alpha (e.g. '3.0.0'). Empty = read from the branch's Changelog.json versions[0].version."
+        description: "Base version for the alpha (e.g. '3.0.0'). Empty = the product file's (or Changelog.json's) versions[0].version."
         type: string
         default: ""
       changelog-path:
-        description: "Path to Changelog.json in the caller repo (read-only — only used to derive the base version when version-base is empty)."
+        description: "Path to Changelog.json (read-only — only used to derive the base version when product-id AND version-base are both empty)."
         type: string
         default: "Config/Changelog.json"
+
+      # ── Product identity (used only when product-id is empty) ──────────────
+      scheme:
+        description: "Xcode scheme to archive (when product-id is empty)."
+        type: string
+        default: ""
+      bundle-id:
+        description: "App bundle identifier (when product-id is empty)."
+        type: string
+        default: ""
+      product-name:
+        description: "Product name — drives the .app name and DMG/ZIP filenames (when product-id is empty)."
+        type: string
+        default: ""
+      bundle-id-finder:
+        description: "Finder extension bundle id (only when has-finder-extension)."
+        type: string
+        default: ""
+      bundle-id-quicklook:
+        description: "Quick Look extension bundle id (only when has-quicklook-extension)."
+        type: string
+        default: ""
+      s3-subpath:
+        description: "S3 sub-prefix (when product-id is empty; a product file supplies its own). Uploads to <dist>/<subpath>/alpha/<version>/."
+        type: string
+        default: ""
 
       # ── Per-app build flags (same meaning as the other orchestrators) ──────
       use-tuist:
         type: boolean
         default: false
       lfs:
-        description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
+        description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
         default: false
       pre-build-cache-path:
@@ -65,9 +103,11 @@ on:
         type: string
         default: ""
       has-finder-extension:
+        description: "Finder extension (when product-id is empty; a product file supplies its own has-finder)."
         type: boolean
         default: false
       has-quicklook-extension:
+        description: "Quick Look extension (when product-id is empty; a product file supplies its own has-quicklook)."
         type: boolean
         default: false
       configuration-direct:
@@ -85,9 +125,7 @@ on:
         type: string
         default: '"macos-26"'
 
-    # Declared so cross-org / cross-account callers (where `secrets: inherit`
-    # silently passes nothing) can pass secrets explicitly. Direct subset only —
-    # no Sparkle key, no App Store certs/profiles.
+    # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
       DEVELOPER_ID_P12_BASE64:        { required: false }
       DEVELOPER_ID_PASSWORD:          { required: false }
@@ -95,6 +133,9 @@ on:
       PROV_PROF_DEVID_BASE64:         { required: false }
       PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
       PROV_PROF_DEVID_QL_BASE64:      { required: false }
+      # A product file may name its Developer ID profile secret via
+      # devid-profile-secret; unset falls back to PROV_PROF_DEVID_BASE64.
+      PROV_PROF_DEVID_PRO_BASE64:     { required: false }
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
@@ -103,11 +144,10 @@ on:
       SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
-  contents: write          # to push the v<base>-alpha.<N> tag
+  contents: write          # to push the <prefix><base>-alpha.<N> tag
 
-# Serialize alpha runs across the repository so two manual dispatches can't race
-# on the alpha counter (both reading "1 existing v3.0.0-alpha.* tag" then both
-# trying to push v3.0.0-alpha.2).
+# Serialize alpha runs across the repo so two manual dispatches can't race on a
+# product's alpha counter.
 concurrency:
   group: distribute-alpha-${{ github.repository }}
   cancel-in-progress: false
@@ -117,6 +157,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      scheme: ${{ steps.compute.outputs.scheme }}
+      bundle-id: ${{ steps.compute.outputs.bundle-id }}
+      product-name: ${{ steps.compute.outputs.product-name }}
+      bundle-id-finder: ${{ steps.compute.outputs.bundle-id-finder }}
+      bundle-id-quicklook: ${{ steps.compute.outputs.bundle-id-quicklook }}
+      has-finder: ${{ steps.compute.outputs.has-finder }}
+      has-quicklook: ${{ steps.compute.outputs.has-quicklook }}
+      s3-subpath: ${{ steps.compute.outputs.s3-subpath }}
+      devid-secret: ${{ steps.compute.outputs.devid-secret }}
       marketing: ${{ steps.compute.outputs.marketing }}
       build-number: ${{ steps.compute.outputs.build-number }}
       artifact-label: ${{ steps.compute.outputs.artifact-label }}
@@ -125,81 +174,126 @@ jobs:
       - name: Checkout caller repo
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # need full tag history for the alpha counter + safeguard
+          fetch-depth: 0  # full tag history for the alpha counter + safeguard
 
-      - name: Compute alpha version
+      - name: Resolve identity + compute alpha version
         id: compute
         shell: bash
         env:
+          PRODUCT_ID: ${{ inputs.product-id }}
+          PRODUCTS_DIR: ${{ inputs.products-dir }}
           CHANGELOG_PATH: ${{ inputs.changelog-path }}
           VERSION_BASE: ${{ inputs.version-base }}
+          IN_SCHEME: ${{ inputs.scheme }}
+          IN_BUNDLE_ID: ${{ inputs.bundle-id }}
+          IN_PRODUCT_NAME: ${{ inputs.product-name }}
+          IN_BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
+          IN_BUNDLE_ID_QL: ${{ inputs.bundle-id-quicklook }}
+          IN_S3_SUBPATH: ${{ inputs.s3-subpath }}
+          IN_HAS_FINDER: ${{ inputs.has-finder-extension }}
+          IN_HAS_QL: ${{ inputs.has-quicklook-extension }}
         run: |
           set -euo pipefail
+          # Resolve identity + base: from Config/products/<id>.json when product-id
+          # is set, else from the direct inputs. shlex.quote keeps values safe.
+          eval "$(python3 - <<'PY'
+          import json, os, shlex
+          def sh(k, v): print(f'{k}={shlex.quote(str(v))}')
+          pid = os.environ.get("PRODUCT_ID", "").strip()
+          if pid:
+              p = json.load(open(f'{os.environ["PRODUCTS_DIR"]}/{pid}.json'))
+              base = os.environ.get("VERSION_BASE") or p["changelog"]["versions"][0]["version"]
+              sh("R_SCHEME", p.get("scheme") or p.get("scheme-store") or "")
+              sh("R_BUNDLE_ID", p.get("bundle-id", ""))
+              sh("R_PRODUCT_NAME", p.get("product-name", ""))
+              sh("R_BUNDLE_ID_FINDER", p.get("bundle-id-finder", ""))
+              sh("R_BUNDLE_ID_QL", p.get("bundle-id-quicklook", ""))
+              sh("R_S3_SUBPATH", (p.get("s3-subpath") or "").strip("/"))
+              sh("R_HAS_FINDER", "true" if p.get("has-finder") else "false")
+              sh("R_HAS_QL", "true" if p.get("has-quicklook") else "false")
+              sh("R_DEVID_SECRET", p.get("devid-profile-secret", ""))
+              sh("R_PREFIX", f"{pid}-v")
+              sh("R_BASE", base)
+          else:
+              base = os.environ.get("VERSION_BASE", "")
+              if not base:
+                  d = json.load(open(os.environ["CHANGELOG_PATH"]))
+                  vs = d.get("versions") or []
+                  base = vs[0].get("version", "") if vs else ""
+              sh("R_SCHEME", os.environ.get("IN_SCHEME", ""))
+              sh("R_BUNDLE_ID", os.environ.get("IN_BUNDLE_ID", ""))
+              sh("R_PRODUCT_NAME", os.environ.get("IN_PRODUCT_NAME", ""))
+              sh("R_BUNDLE_ID_FINDER", os.environ.get("IN_BUNDLE_ID_FINDER", ""))
+              sh("R_BUNDLE_ID_QL", os.environ.get("IN_BUNDLE_ID_QL", ""))
+              sh("R_S3_SUBPATH", (os.environ.get("IN_S3_SUBPATH", "") or "").strip("/"))
+              sh("R_HAS_FINDER", os.environ.get("IN_HAS_FINDER", "false"))
+              sh("R_HAS_QL", os.environ.get("IN_HAS_QL", "false"))
+              sh("R_DEVID_SECRET", "")
+              sh("R_PREFIX", "v")
+              sh("R_BASE", base)
+          PY
+          )"
 
-          BASE="$VERSION_BASE"
-          if [ -z "$BASE" ]; then
-            BASE=$(python3 -c "
-          import json, sys
-          data = json.load(open('$CHANGELOG_PATH'))
-          versions = data.get('versions') or []
-          if not versions or 'version' not in versions[0]:
-              print('::error::$CHANGELOG_PATH has no versions[0].version (and no version-base input given)', file=sys.stderr)
-              sys.exit(1)
-          print(versions[0]['version'])
-          ")
-          fi
+          [ -n "${R_SCHEME:-}" ] || { echo "::error::no scheme resolved — set product-id or the scheme input."; exit 1; }
+          [ -n "${R_BASE:-}" ]   || { echo "::error::no base version resolved — set product-id, version-base, or a valid Changelog.json."; exit 1; }
 
-          # Safeguard (parity with the beta flow): an alpha is a pre-release of an
-          # UNreleased version. If v<base> already shipped, refuse — the operator
-          # almost certainly meant to bump the base first.
-          if git rev-parse "refs/tags/v${BASE}" >/dev/null 2>&1; then
-            echo "::error::v${BASE} is already released — alphas are for an unreleased version. Pass a higher version-base or bump Changelog.json versions[0]."
+          # Safeguard (parity with beta): base must be UNreleased for this product.
+          if git rev-parse "refs/tags/${R_PREFIX}${R_BASE}" >/dev/null 2>&1; then
+            echo "::error::${R_PREFIX}${R_BASE} is already released — alphas are for an unreleased version. Bump the base first."
             exit 1
           fi
 
-          ALPHA_COUNT=$(git tag --list "v${BASE}-alpha.*" | wc -l | tr -d ' ')
-          NEXT_ALPHA=$((ALPHA_COUNT + 1))
-
+          N=$(( $(git tag --list "${R_PREFIX}${R_BASE}-alpha.*" | wc -l | tr -d ' ') + 1 ))
           BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          MARKETING="${BASE}-alpha.${NEXT_ALPHA}"     # e.g. 3.0.0-alpha.1
-          ALPHA_TAG="v${MARKETING}"                   # e.g. v3.0.0-alpha.1
-          ARTIFACT_LABEL="${MARKETING}"               # clean filename label (no leading 'v')
+          MARKETING="${R_BASE}-alpha.${N}"            # e.g. 3.0.0-alpha.1
+          ALPHA_TAG="${R_PREFIX}${R_BASE}-alpha.${N}"  # e.g. main-v3.0.0-alpha.1 or v3.0.0-alpha.1
 
-          echo "marketing=${MARKETING}"           >> "$GITHUB_OUTPUT"
-          echo "build-number=${BUILD_NUMBER}"     >> "$GITHUB_OUTPUT"
-          echo "artifact-label=${ARTIFACT_LABEL}" >> "$GITHUB_OUTPUT"
-          echo "alpha-tag=${ALPHA_TAG}"           >> "$GITHUB_OUTPUT"
+          {
+            echo "scheme=${R_SCHEME}"
+            echo "bundle-id=${R_BUNDLE_ID}"
+            echo "product-name=${R_PRODUCT_NAME}"
+            echo "bundle-id-finder=${R_BUNDLE_ID_FINDER}"
+            echo "bundle-id-quicklook=${R_BUNDLE_ID_QL}"
+            echo "has-finder=${R_HAS_FINDER}"
+            echo "has-quicklook=${R_HAS_QL}"
+            echo "s3-subpath=${R_S3_SUBPATH}"
+            echo "devid-secret=${R_DEVID_SECRET}"
+            echo "marketing=${MARKETING}"
+            echo "build-number=${BUILD_NUMBER}"
+            echo "artifact-label=${MARKETING}"
+            echo "alpha-tag=${ALPHA_TAG}"
+          } >> "$GITHUB_OUTPUT"
 
-          echo "Alpha build prepared:"
-          echo "  Base version:     ${BASE}"
-          echo "  Marketing:        ${MARKETING}"
-          echo "  Build number:     ${BUILD_NUMBER}"
-          echo "  Alpha tag:        ${ALPHA_TAG}"
+          echo "Alpha prepared: ${ALPHA_TAG}  (scheme=${R_SCHEME}, build=${BUILD_NUMBER})"
 
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.3.50
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.0
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
+      scheme-name: ${{ needs.prepare.outputs.scheme }}
+      bundle-id: ${{ needs.prepare.outputs.bundle-id }}
+      product-name: ${{ needs.prepare.outputs.product-name }}
+      bundle-id-finder: ${{ needs.prepare.outputs.bundle-id-finder }}
+      bundle-id-quicklook: ${{ needs.prepare.outputs.bundle-id-quicklook }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
       pre-build-script: ${{ inputs.pre-build-script }}
-      has-finder-extension: ${{ inputs.has-finder-extension }}
-      has-quicklook-extension: ${{ inputs.has-quicklook-extension }}
+      has-finder-extension: ${{ needs.prepare.outputs.has-finder == 'true' }}
+      has-quicklook-extension: ${{ needs.prepare.outputs.has-quicklook == 'true' }}
       runs-on: ${{ inputs.runs-on-build }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
-    # Explicit secret passing (not `inherit`) — see comment on workflow_call.secrets above.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
+      PROV_PROF_DEVID_BASE64:         ${{ needs.prepare.outputs.devid-secret != '' && secrets[needs.prepare.outputs.devid-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
       PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
       PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
       ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
@@ -217,6 +311,7 @@ jobs:
       BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
       ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
       ALPHA_TAG: ${{ needs.prepare.outputs.alpha-tag }}
+      S3_SUBPATH: ${{ needs.prepare.outputs.s3-subpath }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -240,8 +335,7 @@ jobs:
           fi
           aws --version
 
-      # Upload to an UNLISTED `alpha/<version>/` prefix. Nothing references this
-      # path (no appcast, no Releases page) — it's hand-out-the-URL distribution.
+      # Upload to an UNLISTED `alpha/<version>/` prefix — hand-out-the-URL only.
       - name: Upload DMG + ZIP to S3 (unlisted alpha prefix)
         shell: bash
         env:
@@ -251,7 +345,7 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          DEST="${S3_DISTRIBUTION_PATH}/alpha/${MARKETING}"
+          DEST="${S3_DISTRIBUTION_PATH}${S3_SUBPATH:+/$S3_SUBPATH}/alpha/${MARKETING}"
           for f in ./artifacts/direct/*.dmg ./artifacts/direct/*.zip; do
             [ -e "$f" ] || continue
             BASENAME=$(basename "$f")
@@ -259,26 +353,25 @@ jobs:
             echo "Uploaded ${BASENAME} → ${DEST}/"
           done
 
-      # The tag is the durable record that this alpha was cut and doubles as the
-      # counter source for the next run. It does NOT create a GitHub Release.
-      # (Your distribute-release.yml MUST exclude `v*-alpha.*` or this fires it.)
+      # The tag is the durable record + counter source. It does NOT create a GH
+      # Release. (Your distribute-release.yml MUST exclude `*-v*-alpha.*`.)
       - name: Push alpha tag
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$ALPHA_TAG" -m "Alpha ${ALPHA_TAG#v}"
+          git tag -a "$ALPHA_TAG" -m "Alpha ${ALPHA_TAG}"
           git push origin "$ALPHA_TAG"
           echo "Pushed tag $ALPHA_TAG"
 
-      # ── Workflow run summary — the handable download link ──────────────────
       - name: Write alpha build summary
         shell: bash
         env:
-          PRODUCT_NAME: ${{ vars.PRODUCT_NAME }}
+          PRODUCT_NAME: ${{ needs.prepare.outputs.product-name }}
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
         run: |
+          BASE_URL="${S3_DOWNLOAD_URL}${S3_SUBPATH:+/$S3_SUBPATH}/alpha/${MARKETING}"
           {
             echo "## Alpha build ready 🧪"
             echo
@@ -290,6 +383,6 @@ jobs:
             echo
             echo "| Artifact | Download |"
             echo "|---|---|"
-            echo "| DMG | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg](${S3_DOWNLOAD_URL}/alpha/${MARKETING}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg) |"
-            echo "| ZIP | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip](${S3_DOWNLOAD_URL}/alpha/${MARKETING}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip) |"
+            echo "| DMG | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg](${BASE_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg) |"
+            echo "| ZIP | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip](${BASE_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip) |"
           } >> "$GITHUB_STEP_SUMMARY"

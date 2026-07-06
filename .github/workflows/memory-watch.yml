@@ -16,7 +16,7 @@
 #     watcher lost the process / crashed / got bad args). memory_watch.py exit
 #     codes: 0 healthy, 2 leak, 3 error.
 #
-# Required caller vars:  SCHEME_NAME (or input `scheme`), PRODUCT_NAME (or input `app-name`)
+# Required caller inputs: scheme, app-name  (v0.4.0 — no repo-var fallback)
 # Optional caller vars (only when file-jira-on-leak: true):
 #   JIRA_BASE_URL, JIRA_PROJECT_KEY, JIRA_USER_EMAIL, JIRA_ISSUE_TYPE
 # Optional caller secrets:
@@ -44,13 +44,13 @@ on:
 
       # ── What to build/run ──────────────────────────────────────────────────
       scheme:
-        description: "Xcode scheme to build. Defaults to the SCHEME_NAME repo var."
+        description: "Xcode scheme to build."
+        required: true
         type: string
-        default: ""
       app-name:
-        description: "Product name of the .app (and process name). Defaults to the PRODUCT_NAME repo var."
+        description: "Product name of the .app (and process name)."
+        required: true
         type: string
-        default: ""
       process-name:
         description: "Process name to watch, if it differs from app-name. Defaults to app-name."
         type: string
@@ -182,9 +182,9 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
     env:
-      SCHEME: ${{ inputs.scheme || vars.SCHEME_NAME }}
-      APP_NAME: ${{ inputs.app-name || vars.PRODUCT_NAME }}
-      PROCESS_NAME: ${{ inputs.process-name || inputs.app-name || vars.PRODUCT_NAME }}
+      SCHEME: ${{ inputs.scheme }}
+      APP_NAME: ${{ inputs.app-name }}
+      PROCESS_NAME: ${{ inputs.process-name || inputs.app-name }}
       CONFIGURATION: ${{ inputs.configuration }}
       EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
       DURATION_MINUTES: ${{ inputs.duration-minutes }}
@@ -224,7 +224,7 @@ jobs:
             mise exec -- tuist install
             mise exec -- tuist generate --no-open
           else
-            : "${SCHEME:?scheme is required (input 'scheme' or the SCHEME_NAME repo var)}"
+            : "${SCHEME:?scheme is required (input 'scheme')}"
             xcodebuild -resolvePackageDependencies -scheme "$SCHEME" -configuration "$CONFIGURATION"
           fi
 
@@ -244,8 +244,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          : "${SCHEME:?scheme is required (input 'scheme' or the SCHEME_NAME repo var)}"
-          : "${APP_NAME:?app-name is required (input 'app-name' or the PRODUCT_NAME repo var)}"
+          : "${SCHEME:?scheme is required (input 'scheme')}"
+          : "${APP_NAME:?app-name is required (input 'app-name')}"
 
           # Locate the Xcode container (Tuist generates a .xcworkspace). Empty
           # array → let xcodebuild resolve a lone project itself.

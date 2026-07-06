@@ -1,0 +1,18 @@
+{
+  "id": "base",
+  "platform": "macos",
+  "scheme": "FileFillet",
+  "product-name": "FileFillet",
+  "bundle-id": "com.leanbytes.filefillet",
+  "scheme-store": "FileFillet",
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "",
+  "appcast-seed-path": "Config/appcast.xml",
+  "changelog": {
+    "versions": [
+      { "version": "2.13.0", "items": [ { "type": "feat", "title": { "en": "Shared feature" } } ] }
+    ]
+  }
+}

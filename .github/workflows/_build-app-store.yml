@@ -1,6 +1,7 @@
 # ── Internal Build Callee — App Store Distribution ───────────────────────────
 # Produces a signed .pkg for App Store / TestFlight upload, published as a
-# GitHub Actions workflow artifact named "app-store-build". An orchestrator
+# GitHub Actions workflow artifact (named by the artifact-name input; default
+# "app-store-build"). An orchestrator
 # (distribute-beta/release.yml) downloads the artifact and pushes it via
 # xcrun altool.
 #
@@ -18,18 +19,19 @@
 #   KEYCHAIN_PASSWORD       — ephemeral build keychain password
 #   PROV_PROF_STORE_BASE64  — main App Store provisioning profile
 #
-# Required caller vars:
-#   SCHEME_NAME_STORE, BUNDLE_ID, PRODUCT_NAME
+# Required caller inputs (v0.4.0 — product identity comes from the caller's
+# product list, no longer from repo vars):
+#   scheme-name-store, bundle-id
 #
-# Optional vars:
-#   BUNDLE_ID_STORE          — App Store bundle id when it differs from the Direct
-#                              channel's BUNDLE_ID. Defaults to BUNDLE_ID when unset.
+# Optional inputs:
+#   bundle-id-store          — App Store bundle id when it differs from the Direct
+#                              channel's bundle-id. Defaults to bundle-id when empty.
 #
 # Optional (gated by inputs):
-#   has-finder-extension     → PROV_PROF_STORE_FINDER_BASE64, vars.BUNDLE_ID_FINDER
-#                              (+ optional vars.BUNDLE_ID_FINDER_STORE, defaults to BUNDLE_ID_FINDER)
-#   has-quicklook-extension  → PROV_PROF_STORE_QL_BASE64,     vars.BUNDLE_ID_QUICKLOOK
-#                              (+ optional vars.BUNDLE_ID_QUICKLOOK_STORE, defaults to BUNDLE_ID_QUICKLOOK)
+#   has-finder-extension     → PROV_PROF_STORE_FINDER_BASE64, bundle-id-finder
+#                              (+ optional bundle-id-finder-store, defaults to bundle-id-finder)
+#   has-quicklook-extension  → PROV_PROF_STORE_QL_BASE64,     bundle-id-quicklook
+#                              (+ optional bundle-id-quicklook-store, defaults to bundle-id-quicklook)
 # ─────────────────────────────────────────────────────────────────────────────
 name: _build-app-store
 
@@ -49,6 +51,40 @@ on:
         description: "Label for artifact filenames"
         required: true
         type: string
+
+      # ── Product identity (v0.4.0: supplied by the caller's product list) ─────
+      scheme-name-store:
+        description: "Xcode scheme to archive for App Store."
+        required: true
+        type: string
+      bundle-id:
+        description: "Direct-channel bundle id (the fallback base for the *-store ids)."
+        required: true
+        type: string
+      bundle-id-store:
+        description: "App Store bundle id. Defaults to bundle-id when empty."
+        type: string
+        default: ""
+      bundle-id-finder:
+        description: "Finder extension bundle id (used only when has-finder-extension)."
+        type: string
+        default: ""
+      bundle-id-finder-store:
+        description: "App Store Finder extension bundle id. Defaults to bundle-id-finder."
+        type: string
+        default: ""
+      bundle-id-quicklook:
+        description: "Quick Look extension bundle id (used only when has-quicklook-extension)."
+        type: string
+        default: ""
+      bundle-id-quicklook-store:
+        description: "App Store Quick Look extension bundle id. Defaults to bundle-id-quicklook."
+        type: string
+        default: ""
+      artifact-name:
+        description: "GH Actions artifact name for the .pkg upload. Suffix per product to avoid matrix collisions."
+        type: string
+        default: "app-store-build"
 
       # ── Runner ─────────────────────────────────────────────────────────────
       runs-on:
@@ -70,11 +106,11 @@ on:
 
       # ── Extensions ─────────────────────────────────────────────────────────
       has-finder-extension:
-        description: "App has a Finder Sync extension. Expects PROV_PROF_STORE_FINDER_BASE64 secret + vars.BUNDLE_ID_FINDER."
+        description: "App has a Finder Sync extension. Expects PROV_PROF_STORE_FINDER_BASE64 secret + the bundle-id-finder input."
         type: boolean
         default: false
       has-quicklook-extension:
-        description: "App has a Quick Look extension. Expects PROV_PROF_STORE_QL_BASE64 secret + vars.BUNDLE_ID_QUICKLOOK."
+        description: "App has a Quick Look extension. Expects PROV_PROF_STORE_QL_BASE64 secret + the bundle-id-quicklook input."
         type: boolean
         default: false
 
@@ -155,7 +191,7 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
-            -scheme "${{ vars.SCHEME_NAME_STORE }}" \
+            -scheme "${{ inputs.scheme-name-store }}" \
             -configuration Release
 
       # ── Diagnostic: verify .p12 envelope before security import ────────────
@@ -327,7 +363,7 @@ jobs:
           echo "Build number:                          ${{ inputs.build-number }}"
 
           xcodebuild archive \
-            -scheme "${{ vars.SCHEME_NAME_STORE }}" \
+            -scheme "${{ inputs.scheme-name-store }}" \
             -configuration "${{ inputs.configuration }}" \
             -archivePath /tmp/build/app.xcarchive \
             -destination "generic/platform=macOS" \
@@ -339,12 +375,12 @@ jobs:
       - name: Export for App Store distribution
         shell: bash
         env:
-          BUNDLE_ID: ${{ vars.BUNDLE_ID }}
-          BUNDLE_ID_STORE: ${{ vars.BUNDLE_ID_STORE }}
-          BUNDLE_ID_FINDER: ${{ vars.BUNDLE_ID_FINDER }}
-          BUNDLE_ID_FINDER_STORE: ${{ vars.BUNDLE_ID_FINDER_STORE }}
-          BUNDLE_ID_QUICKLOOK: ${{ vars.BUNDLE_ID_QUICKLOOK }}
-          BUNDLE_ID_QUICKLOOK_STORE: ${{ vars.BUNDLE_ID_QUICKLOOK_STORE }}
+          BUNDLE_ID: ${{ inputs.bundle-id }}
+          BUNDLE_ID_STORE: ${{ inputs.bundle-id-store }}
+          BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
+          BUNDLE_ID_FINDER_STORE: ${{ inputs.bundle-id-finder-store }}
+          BUNDLE_ID_QUICKLOOK: ${{ inputs.bundle-id-quicklook }}
+          BUNDLE_ID_QUICKLOOK_STORE: ${{ inputs.bundle-id-quicklook-store }}
           HAS_FINDER: ${{ inputs.has-finder-extension }}
           HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
         run: |
@@ -448,7 +484,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: xcdistributionlogs-app-store
+          name: xcdistributionlogs-${{ inputs.artifact-name }}
           path: /tmp/diag-logs/
           if-no-files-found: warn
           retention-days: 7
@@ -457,7 +493,7 @@ jobs:
       - name: Upload .pkg as workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: app-store-build
+          name: ${{ inputs.artifact-name }}
           path: /tmp/build/export/*.pkg
           if-no-files-found: error
           retention-days: 7

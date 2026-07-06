@@ -1,0 +1,23 @@
+{
+  "id": "pro",
+  "platform": "macos",
+  "scheme": "FileFilletPro",
+  "product-name": "FileFilletPro",
+  "bundle-id": "com.leanbytes.filefilletpro",
+  "scheme-store": "FileFilletPro",
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "pro",
+  "appcast-seed-path": "Config/appcast-pro.xml",
+  "devid-profile-secret": "PROV_PROF_DEVID_PRO_BASE64",
+  "store-profile-secret": "PROV_PROF_STORE_PRO_BASE64",
+  "changelog": {
+    "versions": [
+      { "version": "2.13.0", "items": [
+        { "type": "feat", "title": { "en": "Shared feature" } },
+        { "type": "feat", "title": { "en": "Pro-only power tool" } }
+      ] }
+    ]
+  }
+}
