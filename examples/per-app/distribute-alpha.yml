@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.4
     # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}

@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.4
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -214,7 +214,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.4
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -254,7 +254,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.4
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -344,6 +344,27 @@ jobs:
               print("\x1f".join(str(p.get(k, "")) for k in fields))
           PY
           echo "Products:"; tr '\037' '\t' < /tmp/products.tsv
+
+      - name: Normalize artifact layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          # actions/download-artifact extracts a LONE matched artifact flat into
+          # the base path (no per-artifact subdir); multiple matches DO get subdirs
+          # (merge-multiple defaults false). Re-nest a flattened artifact so the
+          # per-product globs below can always assume artifacts/<chan>/<name>/ —
+          # otherwise a single-product release finds "No .pkg / no DMG".
+          while IFS=$'\x1f' read -r id _; do
+            for pair in "direct:direct-build" "app-store:app-store-build"; do
+              chan="${pair%%:*}"; pre="${pair##*:}"
+              base="./artifacts/$chan"; want="$base/$pre-$id"
+              if [ -d "$base" ] && [ ! -d "$want" ] && [ -n "$(find "$base" -maxdepth 1 -type f 2>/dev/null)" ]; then
+                mkdir -p "$want"
+                find "$base" -maxdepth 1 -type f -exec mv {} "$want"/ \;
+                echo "re-nested flattened $chan artifact → $want/"
+              fi
+            done
+          done < /tmp/products.tsv
 
       # ── Release notes from the (single) target product's inline changelog ──
       - name: Read release notes from the product changelog

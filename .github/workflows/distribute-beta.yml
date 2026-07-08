@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.4
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,7 +233,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.4
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -262,7 +262,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.4
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -302,7 +302,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.4
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -393,6 +393,27 @@ jobs:
               print("\x1f".join(str(p.get(k, "")) for k in fields))
           PY
           echo "Cutting set:"; tr '\037' '\t' < /tmp/products.tsv
+
+      - name: Normalize artifact layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          # actions/download-artifact extracts a LONE matched artifact flat into
+          # the base path (no per-artifact subdir); multiple matches DO get subdirs
+          # (merge-multiple defaults false). Re-nest a flattened artifact so the
+          # per-product globs below can always assume artifacts/<chan>/<name>/ —
+          # otherwise a single-product beta finds "No .pkg / no DMG".
+          while IFS=$'\x1f' read -r id _; do
+            for pair in "direct:direct-build" "app-store:app-store-build"; do
+              chan="${pair%%:*}"; pre="${pair##*:}"
+              base="./artifacts/$chan"; want="$base/$pre-$id"
+              if [ -d "$base" ] && [ ! -d "$want" ] && [ -n "$(find "$base" -maxdepth 1 -type f 2>/dev/null)" ]; then
+                mkdir -p "$want"
+                find "$base" -maxdepth 1 -type f -exec mv {} "$want"/ \;
+                echo "re-nested flattened $chan artifact → $want/"
+              fi
+            done
+          done < /tmp/products.tsv
 
       # ── GATE 1: TestFlight upload (every store product) ───────────────────
       - name: Install App Store Connect API key (for altool)

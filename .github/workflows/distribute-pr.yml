@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.4
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -248,7 +248,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.4
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
