@@ -362,6 +362,12 @@ jobs:
           echo "Marketing version (stripped for ASC): ${MARKETING_VERSION}"
           echo "Build number:                          ${{ inputs.build-number }}"
 
+          # LB-459: /tmp/build persists across jobs on a self-hosted runner. Start
+          # from a clean slot so a prior product's (or a killed job's) archive /
+          # export can't ride along in the *.pkg upload glob below.
+          rm -rf /tmp/build
+          mkdir -p /tmp/build
+
           xcodebuild archive \
             -scheme "${{ inputs.scheme-name-store }}" \
             -configuration "${{ inputs.configuration }}" \

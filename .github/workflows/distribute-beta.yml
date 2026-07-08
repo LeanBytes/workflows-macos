@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.2
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.2
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -255,7 +255,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.2
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -295,7 +295,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.2
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -504,7 +504,7 @@ jobs:
             { [ "$bd" = "True" ] && [ "$dap" = "True" ]; } || continue
             echo "::group::Beta appcast — product=$id"
             WORK="/tmp/appcast-$id"
-            mkdir -p "$WORK"
+            rm -rf "$WORK"; mkdir -p "$WORK"   # LB-459: start clean (persistent self-hosted /tmp)
             cp ./artifacts/direct/direct-build-$id/*.zip "$WORK"/
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
             if aws s3 cp "${DEST}/${afile}" "${WORK}/${afile}"; then

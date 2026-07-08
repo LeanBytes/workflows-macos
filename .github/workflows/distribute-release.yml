@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.2
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -207,7 +207,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.2
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -247,7 +247,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.2
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -483,7 +483,7 @@ jobs:
             { [ "$bd" = "True" ] && [ "$dap" = "True" ]; } || continue
             echo "::group::Stable appcast — product=$id"
             WORK="/tmp/appcast-$id"
-            mkdir -p "$WORK"
+            rm -rf "$WORK"; mkdir -p "$WORK"   # LB-459: start clean (persistent self-hosted /tmp)
             cp ./artifacts/direct/direct-build-$id/*.zip "$WORK"/
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
             if aws s3 cp "${DEST}/${afile}" "${WORK}/${afile}"; then

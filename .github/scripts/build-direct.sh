@@ -40,7 +40,9 @@
 # Required env (config):
 #   SCHEME_NAME BUNDLE_ID PRODUCT_NAME VERSION BUILD_NUMBER ARTIFACT_LABEL
 #   WORK_DIR    intermediates (xcarchive, export); deleted by cleanup
-#   OUTPUT_DIR  where the .dmg/.zip land; NEVER deleted by cleanup
+#   OUTPUT_DIR  where the .dmg/.zip land; NOT wiped by cleanup, but phase_package
+#               clears its *.dmg/*.zip first so a persistent (self-hosted)
+#               OUTPUT_DIR can't leak a prior product's artifacts here (LB-459)
 # Required env (secrets; base64 unless noted):
 #   DEVELOPER_ID_P12_BASE64  DEVELOPER_ID_PASSWORD (plain)  KEYCHAIN_PASSWORD (plain)
 #   PROV_PROF_DEVID_BASE64
@@ -361,6 +363,12 @@ phase_verify() {
 phase_package() {
   banner "Create DMG and ZIP"
   mkdir -p "$OUTPUT_DIR"
+  # LB-459: OUTPUT_DIR (/tmp/build) is fixed and persists across jobs on a
+  # SELF-HOSTED runner (cleanup only wipes WORK_DIR). The GH artifact upload
+  # globs OUTPUT_DIR/*.{dmg,zip}, so a prior product's DMG/ZIP would ride along
+  # and Sparkle's generate_appcast aborts on the duplicate bundle version. Clear
+  # only the top-level artifacts here — WORK_DIR is nested inside and still needed.
+  rm -f "$OUTPUT_DIR"/*.dmg "$OUTPUT_DIR"/*.zip
 
   if [ -z "${NO_DMG:-}" ]; then
     rm -rf "$WORK_DIR/dmg"
