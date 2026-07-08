@@ -1,0 +1,15 @@
+{
+  "id": "pro",
+  "platform": "macos",
+  "scheme": "FileFilletPro",
+  "product-name": "FileFillet_Pro",
+  "bundle-id": "com.example.ffpro",
+  "scheme-store": "FileFilletPro_Store",
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "",
+  "appcast-filename": "appcast-pro.xml",
+  "changelog-filename": "Changelog-pro.json",
+  "changelog": { "versions": [ { "version": "2.0.0", "items": [ { "type": "feat", "title": { "en": "pro" } } ] } ] }
+}

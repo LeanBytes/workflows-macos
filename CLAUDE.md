@@ -12,7 +12,7 @@ Layout: `.github/workflows/_build-{direct,app-store}.yml` are the internal calle
 
 ## The three apps
 
-All three now share the canonical pipeline. The single source of truth for versioning is `Config/Changelog.json` in each app repo, plus git tags as ship-moment markers. The remaining differences are scope, not pipeline:
+All three now share the canonical pipeline. The single source of truth for versioning is each product's **`Config/products/<id>.json`** (build identity + inline changelog), plus git tags as ship-moment markers. The remaining differences are scope, not pipeline:
 
 | App | Distribution channels | Notes |
 |---|---|---|
@@ -22,7 +22,7 @@ All three now share the canonical pipeline. The single source of truth for versi
 
 ## Versioning model (current — as of v0.4.0)
 
-Each product's **`Config/products/<id>.json`** carries its own inline `changelog` (today's Changelog.json schema under a `changelog` key) — the single source of truth for **that product's** next-to-ship version + release notes. Git tags mark ship moments, **product-prefixed**:
+Each product's **`Config/products/<id>.json`** carries its own inline `changelog` (today's Changelog.json schema under a `changelog` key) — the single source of truth for **that product's** next-to-ship version + release notes. Git tags mark ship moments. The **primary** product (the one that omits `id`) uses **bare `vX.Y.Z`** tags; every other product is **`<id>-vX.Y.Z`** (the prefix is a git/CI identifier only — never the app's marketing version). At most one product per repo may omit `id`:
 
 - `changelog.versions[0].version` = the in-progress version that product is building toward.
 - Git tag `<id>-vX.Y.Z` = the stable release of that product's `X.Y.Z`. Pushing it triggers the release flow; CI validates it matches the product's `changelog.versions[0].version`.
@@ -36,7 +36,7 @@ Each product's **`Config/products/<id>.json`** carries its own inline `changelog
 
 As of **v0.4.0** a repo describes each product it ships as a self-contained **`Config/products/<id>.json`** file: build identity (`scheme`, `product-name`, `bundle-id`, `scheme-store` + store bundle ids, extension toggles + ids, per-channel `build-*`/`distribute-*` toggles, `devid-profile-secret`/`store-profile-secret`, `s3-subpath`, `appcast-filename`/`appcast-seed-path`, `platform`) **plus a mandatory inline `changelog`** (today's Changelog.json schema, verbatim, under a `changelog` key). The orchestrators **discover** products by globbing that dir; per-app shells are **trigger-only** (no `products` input). A single-product app has one file; FileFillet ships two (`base.json` + `pro.json`). **Proven end-to-end live in `LeanBytes/workflows-test`** (PR fan-out, per-product betas, release, idle-after-release, resume).
 
-- **Every product is INDEPENDENT.** Its version = its own `changelog.versions[0].version`; its release tag = **`<id>-v<version>`** (e.g. `main-v2.13.0`, `companion-v1.4.0`); its betas = `<id>-v<version>-beta.N` (own counter); its GH Release / S3 subpath / Sparkle appcast are its own. No shared changelog, no lockstep, no shared tag.
+- **Every product is INDEPENDENT.** Its version = its own `changelog.versions[0].version`; its release tag = **`<id>-v<version>`** (e.g. `pro-v1.4.0`) — **except the primary product, which omits `id` and uses bare `v<version>`** (e.g. `v2.13.0`; ≤1 primary per repo, `products.py` enforces it, and a non-empty `id` must match its filename). Betas mirror the tag; its GH Release / S3 subpath / Sparkle appcast are its own. No shared changelog, no lockstep. **Two products at the same `s3-subpath`** (e.g. base + pro both at root) must set distinct `appcast-filename` **and** `changelog-filename` (default `Changelog.json`) so their published files don't collide.
 - **Beta is CHANGELOG-DRIVEN.** On push→main, `products.py plan-beta` cuts a product's next beta **iff** (a) its version isn't released (no `<id>-v<ver>` tag) **and** (b) its own file changed since its last beta (`git diff <id>-v<ver>-beta.<last>..HEAD -- Config/products/<id>.json`). So editing only one product's changelog betas only that product; an idle product (released version) never rides another's betas.
 - **The brain is `.github/scripts/products.py`**: `discover` (PR fan-out), `plan-beta` (changelog-driven cutting set), `plan-release` (parse `<id>-v*` tag → scoped product). Pure stdlib, offline-testable via injected `GIT_TAGS`/`CHANGED_PRODUCTS` — see `tests/run.sh` + `tests/fixtures/**` (and `selftest.yml` runs both on PRs to this repo). `changelog-from-json.sh` auto-descends into a product file's `.changelog`.
 - **Changelog → S3 stays website-compatible.** Release publishes only the product's `.changelog`, extracted as `Changelog.json` (schema-identical to the old file), at the product's `s3-subpath` — build identity never goes public. Base at the S3 root (shipped 2.x apps look there); others under their subpath.
@@ -132,4 +132,4 @@ Don't hardcode these — they're read from `secrets.*` and `vars.*` in every wor
 - **All workflow logic lives here in `workflows-macos`; per-app shells only declare triggers and inputs.** When iterating on logic, edit `_build-*.yml` / `distribute-*.yml` in this repo and bump the tag. Don't fork logic into per-app shells.
 - **The Direct build's shell logic lives in `.github/scripts/build-direct.sh`, not inline in `_build-direct.yml`** (which now just calls it one phase per step). Edit the script — it's the single source of truth and is testable on a Mac via `scripts/build-local.sh` without a commit or CI run. Keep the script and `_build-direct.yml`'s step list in lockstep (one phase ↔ one step).
 - **Move incrementally per app.** Prove a workflow change end-to-end on the leading-edge app (FlowMoose), then port the per-app shell to filefillet and macpacker. The user has explicitly asked for step-by-step — don't roll a single change across all three apps in one pass unless it's a trivially shared snippet.
-- **When bumping the shared workflow's tag, also bump the `@v<tag>` callouts inside the shared workflows AND in `examples/per-app/`.** This is the convention enforced by every release commit message ("Cross-callouts and example shells bumped to @v0.4.0").
+- **When bumping the shared workflow's tag, also bump the `@v<tag>` callouts inside the shared workflows AND in `examples/per-app/`.** This is the convention enforced by every release commit message ("Cross-callouts and example shells bumped to @v0.4.1").

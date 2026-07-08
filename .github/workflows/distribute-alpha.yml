@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.0
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.1
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -212,7 +212,9 @@ jobs:
               sh("R_HAS_FINDER", "true" if p.get("has-finder") else "false")
               sh("R_HAS_QL", "true" if p.get("has-quicklook") else "false")
               sh("R_DEVID_SECRET", p.get("devid-profile-secret", ""))
-              sh("R_PREFIX", f"{pid}-v")
+              # Bare 'v' when the product omits 'id' (primary), '<id>-v' otherwise.
+              file_id = str(p.get("id") or "").strip()
+              sh("R_PREFIX", f"{file_id}-v" if file_id else "v")
               sh("R_BASE", base)
           else:
               base = os.environ.get("VERSION_BASE", "")
@@ -269,7 +271,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.0
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.1
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}

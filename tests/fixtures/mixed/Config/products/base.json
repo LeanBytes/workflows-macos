@@ -1,0 +1,14 @@
+{
+  "id": "",
+  "platform": "macos",
+  "scheme": "FileFillet",
+  "product-name": "FileFillet",
+  "bundle-id": "com.example.ff",
+  "scheme-store": "FileFillet_Store",
+  "build-app-store": true,
+  "distribute-app-store": true,
+  "distribute-appcast": true,
+  "s3-subpath": "",
+  "appcast-filename": "appcast.xml",
+  "changelog": { "versions": [ { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "base" } } ] } ] }
+}

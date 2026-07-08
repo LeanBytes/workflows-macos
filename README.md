@@ -60,9 +60,9 @@ Each product is one **`Config/products/<id>.json`** in your app repo — its bui
 
 There is **no per-item product routing** — each product has its own `Config/products/<id>.json` with its own `changelog`, so its items are already scoped to it. (A pro superset simply repeats the shared items in its own file plus its extras; the small duplication is accepted for the self-contained model.)
 
-**Tags mark ship moments (product-prefixed, per product):**
-- `<id>-vX.Y.Z` — stable release of that product's `X.Y.Z`. You push it manually; CI validates it against that product's `changelog.versions[0].version`.
-- `<id>-vX.Y.Z-beta.N` — Nth beta of that product's in-progress `X.Y.Z`. Auto-pushed on push→main, **only when that product's file changed** (changelog-driven — see below).
+**Tags mark ship moments (per product).** The **primary** product — the one that omits `id` — uses **bare `v*`** tags; every other product is prefixed `<id>-v*`. The prefix is a git/CI identifier only — it never enters the app (`CFBundleShortVersionString` is always the bare `X.Y.Z`). At most one product per repo may omit `id`.
+- `vX.Y.Z` (primary) / `<id>-vX.Y.Z` — stable release. You push it manually; CI validates it against that product's `changelog.versions[0].version`.
+- `vX.Y.Z-beta.N` / `<id>-vX.Y.Z-beta.N` — Nth beta. Auto-pushed on push→main, **only when that product's file changed** (changelog-driven — see below).
 
 **Marketing version per channel** (Apple's iTMS rejects non-`N.N.N` strings in `CFBundleShortVersionString`, so we split):
 - **Direct / Sparkle:** `<next>-beta.<N>` for betas (e.g. `2.12.0-beta.4`), bare `<next>` for releases.
@@ -106,7 +106,7 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.0`.
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.1`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -126,7 +126,7 @@ Fields — only `id`, `scheme`/`product-name`/`bundle-id` (Direct) or `scheme-st
 
 | Field | Meaning |
 |---|---|
-| `id` | Short unique key — labels the build, the GH artifact, the S3 sub-path, and the `<id>-v*` tags. |
+| `id` | Short unique key — labels the build/artifact/S3 sub-path and prefixes tags (`<id>-v*`). **Omit it** (or `""`) for the *primary* product → bare `v*` tags (≤1 per repo; a non-empty `id` must equal the filename). |
 | `platform` | `macos` (default) or `ios` (build leg deferred — iOS products are excluded from the mac build for now). |
 | `scheme` / `product-name` / `bundle-id` | Direct build identity (`product-name` drives the `.app` + DMG/ZIP filenames). |
 | `scheme-store` / `bundle-id-store` | App Store scheme + bundle id (`bundle-id-store` defaults to `bundle-id`). |
@@ -135,6 +135,7 @@ Fields — only `id`, `scheme`/`product-name`/`bundle-id` (Direct) or `scheme-st
 | `devid-profile-secret` / `store-profile-secret` | Name of the provisioning-profile secret for this product (defaults to the shared `PROV_PROF_DEVID_BASE64` / `PROV_PROF_STORE_BASE64`). |
 | `s3-subpath` | S3 + appcast sub-prefix for this product (e.g. `"pro"`; empty = the bucket root). |
 | `appcast-filename` / `appcast-seed-path` | This product's Sparkle feed filename + seed. |
+| `changelog-filename` | Filename for this product's published `Changelog.json` (default `Changelog.json`). Give a second product at the **same** `s3-subpath` a distinct name (e.g. `Changelog-pro.json`) so they don't overwrite each other. |
 | `changelog` | **Required.** Inline release notes — today's `Config/Changelog.json` schema, verbatim (see *How versioning works*). |
 
 For a two-product repo, copy the templates in [`examples/per-app/two-product/`](examples/per-app/two-product/). Certs, keychain, ASC key, and the Sparkle key stay **team-shared**; only the provisioning profiles are per-product — add the extra profile secrets (e.g. `PROV_PROF_DEVID_PRO_BASE64`) and name them in each product's `devid-profile-secret` / `store-profile-secret`.
@@ -165,14 +166,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.4.0`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.4.1`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.0
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.1
     secrets: inherit
     with:
       # …
@@ -200,15 +201,16 @@ Common configurations:
 
 Per-app build flags also available: `use-tuist` (if your Xcode project is generated by Tuist), `extra-xcodebuild-args`, `products-dir` (defaults to `Config/products`). Extension toggles + bundle ids (`has-finder` / `has-quicklook`) now live per product in the product file.
 
-**Release trigger.** Every release tag is product-prefixed `<id>-v<X.Y.Z>`. Your `distribute-release.yml` shell matches those and excludes the auto-pushed beta + alpha tags:
+**Release trigger.** The primary product releases via bare `vX.Y.Z`, extra products via `<id>-vX.Y.Z`. Your `distribute-release.yml` shell matches **both** and excludes the beta + alpha tags of either:
 
 ```yaml
 on:
   push:
     tags:
-      - '*-v*'
-      - '!*-v*-beta.*'
-      - '!*-v*-alpha.*'
+      - 'v*'          # primary product:  v2.12.0
+      - '*-v*'        # extra products:   pro-v1.1.1
+      - '!*-beta.*'
+      - '!*-alpha.*'
 ```
 
 **GH (pre-)release titles.** Stable releases get `v<X.Y.Z>` as the release title (matching the tag); beta pre-releases get `v<X.Y.Z>-beta.<N>`. The DMG and ZIP are attached to the release object as downloadable assets, so the Releases tab on the repo shows them alongside GitHub's auto-attached source archives.
@@ -346,10 +348,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.0
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.1
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.0`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.1`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

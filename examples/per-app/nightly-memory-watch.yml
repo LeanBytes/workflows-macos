@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   memory-watch:
-    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.4.0
+    uses: LeanBytes/workflows-macos/.github/workflows/memory-watch.yml@v0.4.1
     secrets:
       # Only needed when file-jira-on-leak: true (a leak files a Jira ticket).
       JIRA_API_TOKEN:         ${{ secrets.JIRA_API_TOKEN }}

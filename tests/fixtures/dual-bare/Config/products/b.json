@@ -1,0 +1,6 @@
+{
+  "id": "",
+  "platform": "macos",
+  "scheme": "B", "product-name": "B", "bundle-id": "com.example.b",
+  "changelog": { "versions": [ { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "b" } } ] } ] }
+}

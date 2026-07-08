@@ -7,6 +7,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="$ROOT/.github/scripts/products.py"
 MULTI="$ROOT/tests/fixtures/multi-independent/Config/products"
 SINGLE="$ROOT/tests/fixtures/single/Config/products"
+MIXED="$ROOT/tests/fixtures/mixed/Config/products"
+DUAL="$ROOT/tests/fixtures/dual-bare/Config/products"
 FAIL=0
 
 CAP()  { OUT=$(env "$@" 2>/tmp/pd.err); RC=$?; }
@@ -74,6 +76,26 @@ CAP PRODUCTS_DIR="$SINGLE" GIT_TAGS="" BUILD_NUMBER="x" python3 "$PY" plan-beta
 jok "app → beta.1" 'b=json.loads(o["beta-products"]); assert b[0]["release-tag"]=="app-v1.0.0-beta.1"'
 CAP PRODUCTS_DIR="$SINGLE" TAG="app-v1.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release
 line "app release target" "target-id=app"
+
+echo "== mixed: primary (empty id → bare v*) + prefixed pro, both at root =="
+CAP PRODUCTS_DIR="$MIXED" python3 "$PY" discover
+line "mixed ids (keys from filenames)" "ids=base pro"
+CAP PRODUCTS_DIR="$MIXED" GIT_TAGS="" BUILD_NUMBER="x" python3 "$PY" plan-beta
+jok "base → bare v1.0.0-beta.1; pro → pro-v2.0.0-beta.1" \
+  'b={x["id"]:x for x in json.loads(o["beta-products"])}; assert b["base"]["release-tag"]=="v1.0.0-beta.1", b["base"]["release-tag"]; assert b["pro"]["release-tag"]=="pro-v2.0.0-beta.1", b["pro"]["release-tag"]'
+jok "changelog-filename default vs override" \
+  'b={x["id"]:x for x in json.loads(o["beta-products"])}; assert b["base"]["changelog-filename"]=="Changelog.json"; assert b["pro"]["changelog-filename"]=="Changelog-pro.json"'
+CAP PRODUCTS_DIR="$MIXED" TAG="v1.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release
+line "bare tag → primary" "target-id=base"
+CAP PRODUCTS_DIR="$MIXED" TAG="pro-v2.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release
+line "prefixed tag → pro" "target-id=pro"
+CAP PRODUCTS_DIR="$MIXED" GIT_TAGS="v1.0.0" BUILD_NUMBER="x" python3 "$PY" plan-beta
+jok "base released (bare v1.0.0) → idle; only pro cuts" \
+  'b=[x["id"] for x in json.loads(o["beta-products"])]; assert b==["pro"], b'
+
+echo "== validation: two empty-id products → hard error =="
+CAP PRODUCTS_DIR="$DUAL" python3 "$PY" discover
+{ [ $RC -ne 0 ] && grep -q "at most one product may omit" /tmp/pd.err; } && pass "dual-bare rejected" || bad "dual-bare should fail with the one-primary error (rc=$RC)"
 
 echo
 [ $FAIL -eq 0 ] && echo "ALL products.py TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

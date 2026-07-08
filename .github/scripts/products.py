@@ -67,6 +67,12 @@ def strip_internal(rec):
     return {k: v for k, v in rec.items() if not k.startswith("_")}
 
 
+def tag_prefix(rec):
+    """Bare 'v' for the primary (empty-id) product, '<id>-v' otherwise. The
+    prefix is a git-tag/workflow identifier only — never the app's version."""
+    return "v" if rec.get("_bare") else f'{rec["id"]}-v'
+
+
 # ── git (isolated + injectable) ──────────────────────────────────────────────
 def git_tags():
     inj = os.environ.get("GIT_TAGS")
@@ -76,12 +82,12 @@ def git_tags():
     return [t for t in out.stdout.splitlines() if t]
 
 
-def product_changed_since(pid, last_tag, products_dir):
-    """True if Config/products/<id>.json differs between last_tag and HEAD."""
+def product_changed_since(key, filename, last_tag, products_dir):
+    """True if the product's file differs between last_tag and HEAD."""
     inj = os.environ.get("CHANGED_PRODUCTS")
     if inj is not None:
-        return pid in inj.split()
-    path = os.path.join(products_dir, f"{pid}.json")
+        return key in inj.split()
+    path = os.path.join(products_dir, filename)
     rc = subprocess.run(["git", "diff", "--quiet", last_tag, "HEAD", "--", path]).returncode
     return rc != 0
 
@@ -129,12 +135,14 @@ def resolve(products_dir, defaults):
             errors.append(f"{f}: top-level value is not a JSON object")
             continue
 
-        pid = str(p.get("id") or "").strip()
-        if not pid:
-            errors.append(f"{f}: missing required 'id'")
-            pid = os.path.splitext(os.path.basename(f))[0]
+        stem = os.path.splitext(os.path.basename(f))[0]
+        file_id = str(p.get("id") or "").strip()   # empty/omitted → primary, bare v* tags
+        bare = file_id == ""
+        pid = file_id or stem                        # internal key (artifacts/matrix/S3) — always set
+        if file_id and file_id != stem:
+            errors.append(f"{f}: id '{file_id}' must match the filename ('{stem}.json') — rename to '{file_id}.json', or drop 'id' for the primary product")
         if pid in seen:
-            errors.append(f"duplicate product id '{pid}'")
+            errors.append(f"duplicate product id/key '{pid}'")
         seen.add(pid)
 
         platform = str(p.get("platform") or "macos").strip()
@@ -194,8 +202,14 @@ def resolve(products_dir, defaults):
             "s3-subpath": str(p.get("s3-subpath") or "").strip("/"),
             "appcast-filename": str(p.get("appcast-filename") or defaults["appcast_filename"]),
             "appcast-seed-path": str(p.get("appcast-seed-path") or defaults["appcast_seed"]),
+            "changelog-filename": str(p.get("changelog-filename") or "Changelog.json"),
             "_version": version,
+            "_bare": bare,
+            "_file": os.path.basename(f),
         })
+
+    if sum(1 for r in resolved if r["_bare"]) > 1:
+        errors.append("at most one product may omit 'id' — the primary uses bare 'v*' tags; give the others a unique id")
 
     if errors:
         for e in errors:
@@ -230,15 +244,16 @@ def cmd_plan_beta(products_dir, defaults):
     cutting = []
     for r in records:
         pid, v = r["id"], r["_version"]
-        if f"{pid}-v{v}" in tags:                       # released → idle → skip
-            note(f"{pid}: v{v} already released — idle (bump its changelog to cut betas)")
+        pfx = tag_prefix(r)                             # 'v' (primary) or '<id>-v'
+        if f"{pfx}{v}" in tags:                          # released → idle → skip
+            note(f"{pid}: {pfx}{v} already released — idle (bump its changelog to cut betas)")
             continue
-        betas = [t for t in tags if t.startswith(f"{pid}-v{v}-beta.")]
+        betas = [t for t in tags if t.startswith(f"{pfx}{v}-beta.")]
         if betas:                                       # re-beta ONLY if this product changed
             nums = [int(t.rsplit(".", 1)[1]) for t in betas if t.rsplit(".", 1)[1].isdigit()]
             last_n = max(nums) if nums else 0
-            last_tag = f"{pid}-v{v}-beta.{last_n}"
-            if not product_changed_since(pid, last_tag, products_dir):
+            last_tag = f"{pfx}{v}-beta.{last_n}"
+            if not product_changed_since(pid, r["_file"], last_tag, products_dir):
                 note(f"{pid}: unchanged since {last_tag} — skip")
                 continue
             n = last_n + 1
@@ -250,7 +265,7 @@ def cmd_plan_beta(products_dir, defaults):
             "marketing-direct": f"{v}-beta.{n}",
             "marketing-store": v,
             "artifact-label": f"v{v}-beta.{n}",
-            "release-tag": f"{pid}-v{v}-beta.{n}",
+            "release-tag": f"{pfx}{v}-beta.{n}",
         })
         cutting.append(rec)
 
@@ -278,22 +293,23 @@ def cmd_plan_release(products_dir, defaults):
     if re.search(r"-(?:beta|alpha)\.", tag):
         die(f"'{tag}' is a beta/alpha tag and must not reach the release flow — fix the shell tag filter")
 
-    by_id = {r["id"]: r for r in records}
+    # Each product's tag prefix: 'v' for the primary (empty id), '<id>-v' otherwise.
+    # Match the longest prefix first, so 'pro-v…' binds to 'pro' before the bare 'v…'.
+    candidates = sorted(((tag_prefix(r), r) for r in records), key=lambda c: len(c[0]), reverse=True)
     hit = None
-    for pid in sorted(by_id, key=len, reverse=True):     # longest id first (no ambiguity)
-        prefix = f"{pid}-v"
+    for prefix, r in candidates:
         if tag.startswith(prefix):
             ver = tag[len(prefix):]
             if re.match(r"^\d+\.\d+(\.\d+)?$", ver):
-                hit = (pid, ver)
+                hit = (r, ver)
                 break
     if not hit:
-        die(f"'{tag}' matches no <id>-vX.Y.Z for any discovered product — every product releases via its own '<id>-v*' tag (bare 'v*' is not used)")
+        die(f"'{tag}' matches no product's release tag — the primary product releases via 'vX.Y.Z', others via '<id>-vX.Y.Z'")
 
-    pid, ver = hit
-    r = by_id[pid]
+    r, ver = hit
+    pid = r["id"]
     if ver != r["_version"]:
-        die(f"tag '{tag}' (={ver}) != Config/products/{pid}.json changelog.versions[0].version (={r['_version']}). Bump the changelog or fix the tag.")
+        die(f"tag '{tag}' (={ver}) != Config/products/{r['_file']} changelog.versions[0].version (={r['_version']}). Bump the changelog or fix the tag.")
 
     rec = strip_internal(r)
     direct = [rec] if (rec["build-direct"] and rec["platform"] == "macos") else []

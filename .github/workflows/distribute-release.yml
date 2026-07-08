@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.0
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.1
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -207,7 +207,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.0
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.1
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -247,7 +247,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.0
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.1
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -331,7 +331,7 @@ jobs:
           python3 - "$PRODUCTS_JSON" > /tmp/products.tsv <<'PY'
           import json, sys
           fields = ["id","product-name","s3-subpath","appcast-filename","appcast-seed-path",
-                    "changelog-product","build-direct","build-app-store",
+                    "changelog-filename","build-direct","build-app-store",
                     "distribute-app-store","distribute-appcast"]
           for p in json.loads(sys.argv[1]):
               print("\x1f".join(str(p.get(k, "")) for k in fields))
@@ -345,7 +345,7 @@ jobs:
           MARKETING_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
             CHANGELOG_PATH="${PRODUCTS_DIR}/$id.json" VERSION="$MARKETING_VERSION" \
               .shared-ci/.github/scripts/changelog-from-json.sh > "/tmp/notes-$id.md" || true
           done < /tmp/products.tsv
@@ -374,7 +374,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -uo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
             { [ "$bas" = "True" ] && [ "$das" = "True" ]; } || continue
             echo "::group::App Store upload — product=$id"
             PKG=$(ls ./artifacts/app-store/app-store-build-$id/*.pkg 2>/dev/null | head -1 || true)
@@ -418,7 +418,7 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
             [ "$bd" = "True" ] || continue
             echo "::group::S3 upload — product=$id"
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
@@ -441,15 +441,15 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
             [ "$bd" = "True" ] || continue
             # Publish ONLY the product's .changelog (schema-identical to the old
             # Changelog.json) — never the build identity in the product file.
             python3 -c 'import json,sys; json.dump(json.load(open(sys.argv[1]))["changelog"], open(sys.argv[2],"w"))' \
               "${PRODUCTS_DIR}/$id.json" "/tmp/cl-$id.json"
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
-            aws s3 cp "/tmp/cl-$id.json" "${DEST}/Changelog.json" --content-type "application/json"
-            echo "Uploaded Changelog.json → ${DEST}/"
+            aws s3 cp "/tmp/cl-$id.json" "${DEST}/${clfile}" --content-type "application/json"
+            echo "Uploaded ${clfile} → ${DEST}/"
           done < /tmp/products.tsv
 
       # ── GATE 2: Stable appcast update ─────────────────────────────────────
@@ -479,7 +479,7 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
             { [ "$bd" = "True" ] && [ "$dap" = "True" ]; } || continue
             echo "::group::Stable appcast — product=$id"
             WORK="/tmp/appcast-$id"
@@ -550,7 +550,7 @@ jobs:
             echo
             echo "| Artifact | Download |"
             echo "|---|---|"
-            while IFS=$'\x1f' read -r id pname sub afile aseed clp bd bas das dap; do
+            while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
               [ "$bd" = "True" ] || continue
               BASE="${S3_DOWNLOAD_URL}${sub:+/$sub}"
               echo "| DMG | [${pname}_${ARTIFACT_LABEL}.dmg](${BASE}/${pname}_${ARTIFACT_LABEL}.dmg) |"
