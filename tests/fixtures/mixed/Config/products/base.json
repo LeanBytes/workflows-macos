@@ -10,5 +10,7 @@
   "distribute-appcast": true,
   "s3-subpath": "",
   "appcast-filename": "appcast.xml",
+  "devid-cert-secret": "DEVELOPER_ID_P12_ALT_BASE64",
+  "devid-cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT",
   "changelog": { "versions": [ { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "base" } } ] } ] }
 }

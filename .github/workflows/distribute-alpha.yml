@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.3
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -136,6 +136,11 @@ on:
       # A product file may name its Developer ID profile secret via
       # devid-profile-secret; unset falls back to PROV_PROF_DEVID_BASE64.
       PROV_PROF_DEVID_PRO_BASE64:     { required: false }
+      # …and its Developer ID CERTIFICATE via devid-cert-secret /
+      # devid-cert-password-secret; unset falls back to DEVELOPER_ID_P12_BASE64 /
+      # DEVELOPER_ID_PASSWORD (e.g. a legacy team kept after an account transfer).
+      DEVELOPER_ID_P12_ALT_BASE64:    { required: false }
+      DEVELOPER_ID_PASSWORD_ALT:      { required: false }
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
@@ -166,6 +171,8 @@ jobs:
       has-quicklook: ${{ steps.compute.outputs.has-quicklook }}
       s3-subpath: ${{ steps.compute.outputs.s3-subpath }}
       devid-secret: ${{ steps.compute.outputs.devid-secret }}
+      devid-cert-secret: ${{ steps.compute.outputs.devid-cert-secret }}
+      devid-cert-password-secret: ${{ steps.compute.outputs.devid-cert-password-secret }}
       marketing: ${{ steps.compute.outputs.marketing }}
       build-number: ${{ steps.compute.outputs.build-number }}
       artifact-label: ${{ steps.compute.outputs.artifact-label }}
@@ -212,6 +219,8 @@ jobs:
               sh("R_HAS_FINDER", "true" if p.get("has-finder") else "false")
               sh("R_HAS_QL", "true" if p.get("has-quicklook") else "false")
               sh("R_DEVID_SECRET", p.get("devid-profile-secret", ""))
+              sh("R_DEVID_CERT_SECRET", p.get("devid-cert-secret", ""))
+              sh("R_DEVID_CERT_PW_SECRET", p.get("devid-cert-password-secret", ""))
               # Bare 'v' when the product omits 'id' (primary), '<id>-v' otherwise.
               file_id = str(p.get("id") or "").strip()
               sh("R_PREFIX", f"{file_id}-v" if file_id else "v")
@@ -231,6 +240,8 @@ jobs:
               sh("R_HAS_FINDER", os.environ.get("IN_HAS_FINDER", "false"))
               sh("R_HAS_QL", os.environ.get("IN_HAS_QL", "false"))
               sh("R_DEVID_SECRET", "")
+              sh("R_DEVID_CERT_SECRET", "")
+              sh("R_DEVID_CERT_PW_SECRET", "")
               sh("R_PREFIX", "v")
               sh("R_BASE", base)
           PY
@@ -260,6 +271,8 @@ jobs:
             echo "has-quicklook=${R_HAS_QL}"
             echo "s3-subpath=${R_S3_SUBPATH}"
             echo "devid-secret=${R_DEVID_SECRET}"
+            echo "devid-cert-secret=${R_DEVID_CERT_SECRET}"
+            echo "devid-cert-password-secret=${R_DEVID_CERT_PW_SECRET}"
             echo "marketing=${MARKETING}"
             echo "build-number=${BUILD_NUMBER}"
             echo "artifact-label=${MARKETING}"
@@ -271,7 +284,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.3
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -292,8 +305,8 @@ jobs:
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
     secrets:
-      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      DEVELOPER_ID_P12_BASE64:        ${{ needs.prepare.outputs.devid-cert-secret != '' && secrets[needs.prepare.outputs.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:          ${{ needs.prepare.outputs.devid-cert-password-secret != '' && secrets[needs.prepare.outputs.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
       PROV_PROF_DEVID_BASE64:         ${{ needs.prepare.outputs.devid-secret != '' && secrets[needs.prepare.outputs.devid-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
       PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}

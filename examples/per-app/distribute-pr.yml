@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.3
     # ── Optional inputs (uncomment what applies) ────────────────────────────
     # with:
     #   use-tuist: true                                 # FlowMoose

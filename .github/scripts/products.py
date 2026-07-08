@@ -199,6 +199,8 @@ def resolve(products_dir, defaults):
             "bundle-id-quicklook-store": str(p.get("bundle-id-quicklook-store") or ""),
             "devid-profile-secret": str(p.get("devid-profile-secret") or ""),
             "store-profile-secret": str(p.get("store-profile-secret") or ""),
+            "devid-cert-secret": str(p.get("devid-cert-secret") or ""),
+            "devid-cert-password-secret": str(p.get("devid-cert-password-secret") or ""),
             "s3-subpath": str(p.get("s3-subpath") or "").strip("/"),
             "appcast-filename": str(p.get("appcast-filename") or defaults["appcast_filename"]),
             "appcast-seed-path": str(p.get("appcast-seed-path") or defaults["appcast_seed"]),

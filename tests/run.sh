@@ -85,6 +85,8 @@ jok "base → bare v1.0.0-beta.1; pro → pro-v2.0.0-beta.1" \
   'b={x["id"]:x for x in json.loads(o["beta-products"])}; assert b["base"]["release-tag"]=="v1.0.0-beta.1", b["base"]["release-tag"]; assert b["pro"]["release-tag"]=="pro-v2.0.0-beta.1", b["pro"]["release-tag"]'
 jok "changelog-filename default vs override" \
   'b={x["id"]:x for x in json.loads(o["beta-products"])}; assert b["base"]["changelog-filename"]=="Changelog.json"; assert b["pro"]["changelog-filename"]=="Changelog-pro.json"'
+jok "per-product devid cert secret carried (base overrides, pro defaults)" \
+  'b={x["id"]:x for x in json.loads(o["beta-products"])}; assert b["base"]["devid-cert-secret"]=="DEVELOPER_ID_P12_ALT_BASE64"; assert b["base"]["devid-cert-password-secret"]=="DEVELOPER_ID_PASSWORD_ALT"; assert b["pro"]["devid-cert-secret"]==""'
 CAP PRODUCTS_DIR="$MIXED" TAG="v1.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release
 line "bare tag → primary" "target-id=base"
 CAP PRODUCTS_DIR="$MIXED" TAG="pro-v2.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release

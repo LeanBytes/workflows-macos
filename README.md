@@ -106,7 +106,7 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.2`.
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.3`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -133,12 +133,13 @@ Fields — only `id`, `scheme`/`product-name`/`bundle-id` (Direct) or `scheme-st
 | `bundle-id-finder`(`-store`) / `bundle-id-quicklook`(`-store`), `has-finder` / `has-quicklook` | Extension bundle ids + toggles, per product. |
 | `build-direct` / `build-app-store` / `distribute-app-store` / `distribute-appcast` | Per-product channel toggles (default to the shell's top-level inputs). |
 | `devid-profile-secret` / `store-profile-secret` | Name of the provisioning-profile secret for this product (defaults to the shared `PROV_PROF_DEVID_BASE64` / `PROV_PROF_STORE_BASE64`). |
+| `devid-cert-secret` / `devid-cert-password-secret` | Name of the Developer ID **certificate** p12 + password secrets for this product (defaults to the shared `DEVELOPER_ID_P12_BASE64` / `DEVELOPER_ID_PASSWORD`). For a product signing under a different team — e.g. one that kept its legacy Developer ID after an account transfer. |
 | `s3-subpath` | S3 + appcast sub-prefix for this product (e.g. `"pro"`; empty = the bucket root). |
 | `appcast-filename` / `appcast-seed-path` | This product's Sparkle feed filename + seed. |
 | `changelog-filename` | Filename for this product's published `Changelog.json` (default `Changelog.json`). Give a second product at the **same** `s3-subpath` a distinct name (e.g. `Changelog-pro.json`) so they don't overwrite each other. |
 | `changelog` | **Required.** Inline release notes — today's `Config/Changelog.json` schema, verbatim (see *How versioning works*). |
 
-For a two-product repo, copy the templates in [`examples/per-app/two-product/`](examples/per-app/two-product/). Certs, keychain, ASC key, and the Sparkle key stay **team-shared**; only the provisioning profiles are per-product — add the extra profile secrets (e.g. `PROV_PROF_DEVID_PRO_BASE64`) and name them in each product's `devid-profile-secret` / `store-profile-secret`.
+For a two-product repo, copy the templates in [`examples/per-app/two-product/`](examples/per-app/two-product/). Keychain, ASC key, and the Sparkle key stay **team-shared**; the provisioning profiles **and the Developer ID certificate** are per-product — add the extra profile secrets (e.g. `PROV_PROF_DEVID_PRO_BASE64`) and, if a product signs under a different team, its cert secrets (e.g. `DEVELOPER_ID_P12_ALT_BASE64` + `DEVELOPER_ID_PASSWORD_ALT`), and name them in each product's `devid-profile-secret` / `store-profile-secret` / `devid-cert-secret` / `devid-cert-password-secret`.
 
 ### 3. Per-app xcconfig
 
@@ -166,14 +167,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.4.2`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.4.3`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.3
     secrets: inherit
     with:
       # …
@@ -348,10 +349,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.2
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.3
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.2`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.3`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

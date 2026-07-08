@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.3
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -134,6 +134,13 @@ on:
       # PROV_PROF_*_BASE64. Add more as needed.
       PROV_PROF_DEVID_PRO_BASE64:     { required: false }
       PROV_PROF_STORE_PRO_BASE64:     { required: false }
+      # Per-product Developer ID CERTIFICATE (p12 + password). A product names
+      # them via devid-cert-secret / devid-cert-password-secret; unset falls back
+      # to DEVELOPER_ID_P12_BASE64 / DEVELOPER_ID_PASSWORD. Use when a product
+      # signs under a different team (e.g. an app kept its legacy Developer ID
+      # after an account transfer). Add more alternates as needed.
+      DEVELOPER_ID_P12_ALT_BASE64:    { required: false }
+      DEVELOPER_ID_PASSWORD_ALT:      { required: false }
       APPLE_DISTR_P12_BASE64:         { required: false }
       APPLE_DISTR_PASSWORD:           { required: false }
       MAC_DISTR_P12_BASE64:           { required: false }
@@ -207,7 +214,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.3
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -229,8 +236,8 @@ jobs:
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
     secrets:
-      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      DEVELOPER_ID_P12_BASE64:        ${{ matrix.product.devid-cert-secret != '' && secrets[matrix.product.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:          ${{ matrix.product.devid-cert-password-secret != '' && secrets[matrix.product.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
       PROV_PROF_DEVID_BASE64:         ${{ matrix.product.devid-profile-secret != '' && secrets[matrix.product.devid-profile-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
       PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
@@ -247,7 +254,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.3
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
