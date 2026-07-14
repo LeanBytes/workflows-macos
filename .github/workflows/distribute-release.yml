@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.4
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.5
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -108,6 +108,10 @@ on:
         description: "Xcode build configuration for the App Store archive. Default 'Release'."
         type: string
         default: "Release"
+      attach-release-assets:
+        description: "Attach the DMG/ZIP to the GitHub Release. Default true. Set false to save GitHub storage/bandwidth — the DMG/ZIP still upload to S3 (the real distribution) and the appcast points there; only the redundant GitHub copy is skipped. Notes + tag are still created."
+        type: boolean
+        default: true
       create-discussion:
         description: |
           Auto-create a GitHub Discussion alongside the release. OFF by default —
@@ -214,7 +218,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.5
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -254,7 +258,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.5
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -551,7 +555,7 @@ jobs:
           gh release create "${{ github.ref_name }}" "${ARGS[@]}"
 
       - name: Attach DMG + ZIP to GH Release
-        if: needs.build-direct.result == 'success'
+        if: needs.build-direct.result == 'success' && inputs.attach-release-assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

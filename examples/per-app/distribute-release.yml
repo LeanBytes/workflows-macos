@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.5
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
@@ -44,3 +44,4 @@ jobs:
     #   use-tuist: true
     #   runs-on-build: '["self-hosted","agent-alex"]'
     #   create-discussion: true          # opt-in; needs Discussions + the exact category
+    #   attach-release-assets: false     # skip GitHub-Release asset upload (S3 keeps the DMG/ZIP) — saves budget

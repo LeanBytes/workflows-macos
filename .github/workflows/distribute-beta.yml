@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.4
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.5
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +104,10 @@ on:
         description: "Xcode build configuration for the App Store archive. Default 'Release'."
         type: string
         default: "Release"
+      attach-release-assets:
+        description: "Attach the DMG/ZIP to the GitHub pre-release. Default true. Set false to save GitHub storage/bandwidth — the DMG/ZIP still upload to S3 (the real distribution) and the appcast points there; only the redundant GitHub copy is skipped. Notes + tag are still created."
+        type: boolean
+        default: true
 
       # ── Tests (opt-in) — gate the beta on the app's Swift tests ────────────
       run-tests:
@@ -233,7 +237,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.5
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -262,7 +266,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.5
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -302,7 +306,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.5
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -348,6 +352,7 @@ jobs:
       PRODUCTS_DIR: ${{ inputs.products-dir }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
+      ATTACH_ASSETS: ${{ inputs.attach-release-assets }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
@@ -571,7 +576,7 @@ jobs:
               NOTES_ARG=(--notes-file "/tmp/notes-$id.md")
             fi
             gh release create "$rtag" --repo "$REPO" --title "$rtag" --prerelease "${NOTES_ARG[@]}"
-            if [ "$bd" = "True" ]; then
+            if [ "$bd" = "True" ] && [ "$ATTACH_ASSETS" = "true" ]; then
               shopt -s nullglob
               ASSETS=( ./artifacts/direct/direct-build-$id/*.dmg ./artifacts/direct/direct-build-$id/*.zip )
               shopt -u nullglob

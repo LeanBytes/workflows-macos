@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   beta:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.5
     # `secrets: inherit` only works same-org; the explicit list works universally.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -47,3 +47,4 @@ jobs:
     #   runs-on-build: '["self-hosted","agent-alex"]'
     #   runs-on-publish: '["self-hosted","agent-alex"]'
     #   run-tests: true                  # gate the beta on tests (files a Jira ticket on failure)
+    #   attach-release-assets: false     # skip GitHub pre-release asset upload (S3 keeps the DMG/ZIP) — saves budget

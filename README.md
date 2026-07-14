@@ -106,7 +106,7 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.4`.
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.5`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -167,14 +167,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.4.4`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.4.5`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.4
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.5
     secrets: inherit
     with:
       # …
@@ -214,7 +214,7 @@ on:
       - '!*-alpha.*'
 ```
 
-**GH (pre-)release titles.** Stable releases get `v<X.Y.Z>` as the release title (matching the tag); beta pre-releases get `v<X.Y.Z>-beta.<N>`. The DMG and ZIP are attached to the release object as downloadable assets, so the Releases tab on the repo shows them alongside GitHub's auto-attached source archives.
+**GH (pre-)release titles + assets.** The release title matches the tag (`vX.Y.Z` / `<id>-vX.Y.Z`, or the `…-beta.N` variant for a pre-release). By default the DMG + ZIP are also attached to the release object as downloadable assets. Set **`attach-release-assets: false`** in the beta/release shell to skip that upload and **save GitHub storage/bandwidth** — the DMG/ZIP still go to S3 (where the appcast points), so only the redundant GitHub copy is dropped; the Release object + notes + tag are still created.
 
 **GitHub Discussions (off by default, releases only).** Set `create-discussion: true` in `distribute-release.yml`'s shell to auto-open a discussion alongside each stable release. The discussion's title matches the release title (e.g. `v0.15`); the category defaults to `Announcements` and can be overridden via `discussion-category: <name>`.
 
@@ -349,10 +349,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.4
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.5
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.4`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.5`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 
