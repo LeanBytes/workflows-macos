@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.6
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -93,6 +93,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep the uploaded Direct build artifact (default 7). Raise it per app if you need longer for debugging."
+        type: number
+        default: 7
       pre-build-cache-path:
         type: string
         default: ""
@@ -284,7 +288,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -304,6 +308,7 @@ jobs:
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ needs.prepare.outputs.devid-cert-secret != '' && secrets[needs.prepare.outputs.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ needs.prepare.outputs.devid-cert-password-secret != '' && secrets[needs.prepare.outputs.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}

@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.6
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -92,6 +92,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep uploaded build artifacts (default 7). They're consumed within the run, so this is mostly for post-hoc debugging — raise it per app if you need longer."
+        type: number
+        default: 7
       appcast-filename:
         description: "Default appcast XML filename for files that omit it."
         type: string
@@ -218,7 +222,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -239,6 +243,7 @@ jobs:
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ matrix.product.devid-cert-secret != '' && secrets[matrix.product.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ matrix.product.devid-cert-password-secret != '' && secrets[matrix.product.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
@@ -258,7 +263,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.6
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -278,6 +283,7 @@ jobs:
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-app-store }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
       APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}

@@ -97,6 +97,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep uploaded artifacts (default 7). Most are consumed within the same run; raise it per app if you need longer for debugging."
+        type: number
+        default: 7
 
       # ── Project type ───────────────────────────────────────────────────────
       use-tuist:
@@ -493,7 +497,7 @@ jobs:
           name: xcdistributionlogs-${{ inputs.artifact-name }}
           path: /tmp/diag-logs/
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: ${{ inputs.artifact-retention-days }}
 
       # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload .pkg as workflow artifact
@@ -502,7 +506,7 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: /tmp/build/export/*.pkg
           if-no-files-found: error
-          retention-days: 7
+          retention-days: ${{ inputs.artifact-retention-days }}
 
       # ── Cleanup ────────────────────────────────────────────────────────────
       - name: Cleanup

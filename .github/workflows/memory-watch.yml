@@ -41,6 +41,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep the uploaded RSS-sample/log artifact (default 7). Raise it per app if you need longer for debugging a leak after the fact."
+        type: number
+        default: 7
 
       # ── What to build/run ──────────────────────────────────────────────────
       scheme:
@@ -321,6 +325,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: memory-samples-${{ needs.gate.outputs.short_sha }}
+          retention-days: ${{ inputs.artifact-retention-days }}
           path: memory-samples.json
           if-no-files-found: warn
 

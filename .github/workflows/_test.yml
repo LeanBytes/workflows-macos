@@ -40,6 +40,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep the uploaded test-results artifact (default 7). Raise it per app if you need longer for debugging."
+        type: number
+        default: 7
 
       # ── xcodebuild runner (the app/UI scheme) ──────────────────────────────
       test-scheme:
@@ -205,6 +209,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ needs.gate.outputs.short_sha }}
+          retention-days: ${{ inputs.artifact-retention-days }}
           path: |
             test-report.json
             test-results.xcresult

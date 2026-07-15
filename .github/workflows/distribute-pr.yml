@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.6
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -54,6 +54,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep uploaded artifacts (default 7). Passed through to the test gate. Raise it per app if you need longer for debugging."
+        type: number
+        default: 7
 
       extra-xcodebuild-args:
         description: "Additional xcodebuild settings appended to the build command."
@@ -248,11 +252,12 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.6
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
       test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || fromJSON(needs.discover.outputs.products)[0].scheme }}
       test-plan: ${{ inputs.test-plan }}
       use-tuist: ${{ inputs.use-tuist }}

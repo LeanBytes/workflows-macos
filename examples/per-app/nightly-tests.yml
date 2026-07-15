@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   tests:
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.6
     secrets:
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       # SHARED_WORKFLOWS_TOKEN: ${{ secrets.SHARED_WORKFLOWS_TOKEN }}   # private fork only

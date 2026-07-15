@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.6
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,6 +88,10 @@ on:
         description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
         default: false
+      artifact-retention-days:
+        description: "Days to keep uploaded build/test artifacts (default 7). They're consumed within the run, so this is mostly for post-hoc debugging — raise it per app if you need longer."
+        type: number
+        default: 7
       appcast-filename:
         description: "Default appcast XML filename for files that omit it."
         type: string
@@ -237,11 +241,12 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.6
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
       test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || needs.prepare.outputs.test-scheme }}
       test-plan: ${{ inputs.test-plan }}
       use-tuist: ${{ inputs.use-tuist }}
@@ -266,7 +271,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -287,6 +292,7 @@ jobs:
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ matrix.product.devid-cert-secret != '' && secrets[matrix.product.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ matrix.product.devid-cert-password-secret != '' && secrets[matrix.product.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
@@ -306,7 +312,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.6
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -326,6 +332,7 @@ jobs:
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-app-store }}
       lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
       APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
