@@ -30,9 +30,9 @@ on:
     inputs:
       # ── Runner ─────────────────────────────────────────────────────────────
       runs-on:
-        description: "JSON-encoded runner for the (long) watch job. Multi-hour watches need self-hosted — GitHub-hosted macOS caps jobs at 6h. e.g. '\"macos-26\"' or '[\"self-hosted\",\"agent-alex\"]'."
+        description: "JSON-encoded runner for the (long) watch job. Defaults to self-hosted macOS — multi-hour watches need it (GitHub-hosted macOS caps jobs at 6h)."
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       job-timeout-minutes:
         description: "Hard ceiling for the watch job. Must exceed duration-minutes + build time."
         type: number
@@ -135,7 +135,7 @@ jobs:
   # Cheap gate on ubuntu (like the distribute-* prepare jobs). A per-commit cache
   # marker makes each commit on main get watched exactly once; `force` overrides.
   gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}

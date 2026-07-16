@@ -80,9 +80,9 @@ on:
 
       # ── Runner ─────────────────────────────────────────────────────────────
       runs-on:
-        description: "JSON-encoded runner label or array (e.g. '\"macos-26\"' or '[\"self-hosted\",\"agent-alex\"]')"
+        description: "JSON-encoded runner label or array. Defaults to self-hosted macOS; pass a hosted label like macos-26 to override."
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
 
       # ── Checkout ───────────────────────────────────────────────────────────
       lfs:

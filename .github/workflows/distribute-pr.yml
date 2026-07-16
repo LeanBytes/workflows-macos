@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.7
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -46,9 +46,9 @@ on:
         default: ""
 
       runs-on-build:
-        description: "JSON-encoded runner label or array (e.g. '\"macos-26\"')."
+        description: "JSON-encoded runner label or array. Defaults to self-hosted macOS; pass macos-26 for a hosted runner."
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
 
       lfs:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
@@ -112,7 +112,7 @@ jobs:
   # products.py validates identity + the mandatory inline changelog and fails
   # loudly on a bad file — so this ubuntu job gates the expensive macOS verify.
   discover:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       products: ${{ steps.d.outputs.products }}
@@ -252,7 +252,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.7
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}

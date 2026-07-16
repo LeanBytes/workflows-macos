@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.7
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,11 +79,11 @@ on:
         default: ""
       runs-on-build:
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       runs-on-publish:
         description: "Publish job needs macOS for altool + Sparkle generate_appcast"
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       lfs:
         description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
@@ -190,7 +190,7 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       products: ${{ steps.plan.outputs.beta-products }}
@@ -241,7 +241,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.7
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-build }}
@@ -271,7 +271,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.7
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -312,7 +312,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.7
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}

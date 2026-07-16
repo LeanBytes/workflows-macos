@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.7
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -84,10 +84,10 @@ on:
         default: ""
       runs-on-build:
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       runs-on-publish:
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       lfs:
         description: "Pull the caller repo's git LFS files on checkout. Off by default."
         type: boolean
@@ -170,7 +170,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       target-id: ${{ steps.plan.outputs.target-id }}
@@ -222,7 +222,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.7
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -263,7 +263,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.7
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}

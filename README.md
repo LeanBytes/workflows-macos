@@ -106,7 +106,7 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.6`.
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.4.7`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -167,14 +167,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.4.6`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.4.7`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.7
     secrets: inherit
     with:
       # …
@@ -349,10 +349,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.6
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.7
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.6`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.4.7`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

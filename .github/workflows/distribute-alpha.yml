@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.7
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -123,11 +123,11 @@ on:
         default: ""
       runs-on-build:
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       runs-on-publish:
         description: "Publish job runner. Ubuntu is fine (only AWS CLI + git tag push), but defaults to macOS for parity."
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
 
     # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
@@ -163,7 +163,7 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       scheme: ${{ steps.compute.outputs.scheme }}
@@ -288,7 +288,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.7
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}

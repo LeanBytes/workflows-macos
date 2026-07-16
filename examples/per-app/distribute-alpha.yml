@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.4.7
     # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -59,8 +59,9 @@ jobs:
       # ── Per-app build flags (match your distribute-beta.yml) ────────────
       # use-tuist: true                # FlowMoose
       # lfs: true                      # if a build input (e.g. a model) is git-LFS-tracked — FlowMoose
-      # runs-on-build: '["self-hosted","agent-alex"]'
-      # runs-on-publish: '["self-hosted","agent-alex"]'
+      # runners default to self-hosted macOS; override to hosted here:
+      # runs-on-build: '"macos-26"'
+      # runs-on-publish: '"macos-26"'
       # pre-build-cache-path: FlowMoose/Models/ggml-base.bin
       # pre-build-cache-key: whisper-base-model-v1
       # pre-build-script: .ci/download-whisper-model.sh

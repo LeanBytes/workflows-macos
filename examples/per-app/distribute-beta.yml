@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   beta:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.4.7
     # `secrets: inherit` only works same-org; the explicit list works universally.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -44,8 +44,9 @@ jobs:
     #   distribute-beta-appcast: true    # FlowMoose (Sparkle beta channel)
     #   use-tuist: true                  # FlowMoose
     #   lfs: true
-    #   runs-on-build: '["self-hosted","agent-alex"]'
-    #   runs-on-publish: '["self-hosted","agent-alex"]'
+    #   # runners default to self-hosted macOS ([self-hosted, macOS]); override here, e.g.:
+    #   runs-on-build: '["self-hosted","agent-alex"]'   # pin to a specific runner
+    #   runs-on-publish: '"macos-26"'                    # or send a job back to a hosted runner
     #   run-tests: true                  # gate the beta on tests (files a Jira ticket on failure)
     #   attach-release-assets: false     # skip GitHub pre-release asset upload (S3 keeps the DMG/ZIP) — saves budget
     #   artifact-retention-days: 30      # keep uploaded build/test artifacts longer than the 7-day default

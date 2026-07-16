@@ -90,7 +90,7 @@ on:
       runs-on:
         description: "JSON-encoded runner label or array"
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
 
       # ── Checkout ───────────────────────────────────────────────────────────
       lfs:

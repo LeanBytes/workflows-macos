@@ -14,12 +14,12 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.4.7
     # ── Optional inputs (uncomment what applies) ────────────────────────────
     # with:
     #   use-tuist: true                                 # FlowMoose
     #   lfs: true                                       # an LFS-tracked build input
-    #   runs-on-build: '["self-hosted","agent-alex"]'
+    #   runs-on-build: '"macos-26"'                     # runners default to self-hosted macOS; override to hosted here
     #   run-tests: true                                 # build + test instead of compile-only
     #   test-runner: both
     #   swift-package-path: Core

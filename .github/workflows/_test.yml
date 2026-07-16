@@ -30,9 +30,9 @@ on:
         type: string
         default: "xcodebuild"
       runs-on:
-        description: "JSON-encoded runner. Tests are fast — hosted macos-26 is fine."
+        description: "JSON-encoded runner. Defaults to self-hosted macOS; tests are fast, so a hosted runner (macos-26) is fine too."
         type: string
-        default: '"macos-26"'
+        default: '["self-hosted","macOS"]'
       job-timeout-minutes:
         type: number
         default: 60
@@ -116,7 +116,7 @@ permissions:
 
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 5
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}

@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.7
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
@@ -42,7 +42,7 @@ jobs:
     #   build-app-store: true            # default a product file inherits
     #   distribute-app-store: true
     #   use-tuist: true
-    #   runs-on-build: '["self-hosted","agent-alex"]'
+    #   runs-on-build: '"macos-26"'      # runners default to self-hosted macOS; override to hosted (or a specific runner) here
     #   create-discussion: true          # opt-in; needs Discussions + the exact category
     #   attach-release-assets: false     # skip GitHub-Release asset upload (S3 keeps the DMG/ZIP) — saves budget
     #   artifact-retention-days: 30      # keep uploaded build artifacts longer than the 7-day default
