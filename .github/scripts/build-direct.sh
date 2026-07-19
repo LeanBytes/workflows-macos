@@ -401,10 +401,18 @@ phase_verify_packages() {
 
   if [ -z "${NO_DMG:-}" ]; then
     local mount rc=0
-    mount=$(hdiutil attach -nobrowse -readonly "$DMG_PATH" | awk 'END{print $NF}')
+    # Attach at a private mktemp mountpoint — NEVER parse the default /Volumes/<name> out of the attach
+    # output. When any leftover claims the volume name, macOS mounts at "/Volumes/<name> 1" and the old
+    # `awk END{print $NF}` parse returned the bare "1" (a space-split fragment), so codesign/spctl ran
+    # against a nonexistent relative path and every verify failed ("invalid API object reference"). A
+    # unique mountpoint is immune to duplicates, spaces, and output-format drift (issue #1).
+    mount=$(mktemp -d)
+    hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$DMG_PATH" > /dev/null
     spctl --assess --type execute --verbose=4 "$mount/$app_name" || rc=$?
     codesign --verify --deep --strict --verbose=4 "$mount/$app_name" || rc=$?
-    hdiutil detach "$mount" || true        # detach even if a check failed
+    # Detach even if a check failed; -force as fallback so a busy mount can't strand itself for the
+    # next run (a stranded mount is exactly what triggered the "/Volumes/<name> 1" case above).
+    hdiutil detach "$mount" || hdiutil detach -force "$mount" || true
     [ "$rc" -eq 0 ] || { echo "::error::DMG verification failed"; exit 1; }
   fi
 
