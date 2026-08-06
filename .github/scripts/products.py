@@ -47,6 +47,10 @@ def note(msg):
     print(f"::notice::{msg}", file=sys.stderr)
 
 
+def warn(msg):
+    print(f"::warning::{msg}", file=sys.stderr)
+
+
 def as_bool(v, default):
     if v is None or v == "":
         return default
@@ -82,13 +86,20 @@ def git_tags():
     return [t for t in out.stdout.splitlines() if t]
 
 
-def product_changed_since(key, filename, last_tag, products_dir):
-    """True if the product's file differs between last_tag and HEAD."""
+def product_changed_since(key, filename, last_tag, products_dir, source_paths=()):
+    """True if the product's file — or any of its declared source paths — differs
+    between last_tag and HEAD.
+
+    Without `source-paths`, only the product file counts, so a commit that changes
+    nothing but Swift still cuts no beta and the run goes green with the fix
+    sitting unshipped on main. Declaring the paths a product actually builds from
+    makes a code-only change cut a beta on its own.
+    """
     inj = os.environ.get("CHANGED_PRODUCTS")
     if inj is not None:
         return key in inj.split()
-    path = os.path.join(products_dir, filename)
-    rc = subprocess.run(["git", "diff", "--quiet", last_tag, "HEAD", "--", path]).returncode
+    paths = [os.path.join(products_dir, filename), *source_paths]
+    rc = subprocess.run(["git", "diff", "--quiet", last_tag, "HEAD", "--", *paths]).returncode
     return rc != 0
 
 
@@ -208,6 +219,11 @@ def resolve(products_dir, defaults):
             "_version": version,
             "_bare": bare,
             "_file": os.path.basename(f),
+            # Git pathspecs this product builds from, e.g. ["MyApp/**",
+            # "Project.swift"]. Optional; when set, a change to any of them cuts a
+            # beta on its own, so a code-only fix ships without needing a
+            # cosmetic edit to the product file. Internal: plan-beta only.
+            "_source_paths": [str(x) for x in (p.get("source-paths") or []) if str(x).strip()],
         })
 
     if sum(1 for r in resolved if r["_bare"]) > 1:
@@ -255,8 +271,19 @@ def cmd_plan_beta(products_dir, defaults):
             nums = [int(t.rsplit(".", 1)[1]) for t in betas if t.rsplit(".", 1)[1].isdigit()]
             last_n = max(nums) if nums else 0
             last_tag = f"{pfx}{v}-beta.{last_n}"
-            if not product_changed_since(pid, r["_file"], last_tag, products_dir):
-                note(f"{pid}: unchanged since {last_tag} — skip")
+            if not product_changed_since(pid, r["_file"], last_tag, products_dir, r["_source_paths"]):
+                # A warning, not a notice: this is the case where a push that DID
+                # change code still ships nothing, and the run is otherwise green.
+                # Without `source-paths` the check cannot see code at all, so say
+                # what to do about it rather than letting the silence pass.
+                if r["_source_paths"]:
+                    warn(f"{pid}: neither {products_dir}/{r['_file']} nor its source-paths "
+                         f"changed since {last_tag} — no beta cut")
+                else:
+                    warn(f"{pid}: {products_dir}/{r['_file']} unchanged since {last_tag} — no beta "
+                         f"cut. Code-only changes do NOT trigger a beta; add \"source-paths\" to "
+                         f"the product file (e.g. [\"{pid or 'MyApp'}/**\", \"Project.swift\"]) so "
+                         f"they do.")
                 continue
             n = last_n + 1
         else:
