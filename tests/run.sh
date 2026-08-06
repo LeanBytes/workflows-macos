@@ -99,5 +99,23 @@ echo "== validation: two empty-id products → hard error =="
 CAP PRODUCTS_DIR="$DUAL" python3 "$PY" discover
 { [ $RC -ne 0 ] && grep -q "at most one product may omit" /tmp/pd.err; } && pass "dual-bare rejected" || bad "dual-bare should fail with the one-primary error (rc=$RC)"
 
+echo "== classify_upload: altool outcome classification =="
+# Sourced from the shipped script rather than re-implemented, so this test cannot
+# drift from what the publish steps actually run.
+source "$ROOT/.github/scripts/classify-upload.sh"
+cls() { GOT=$(classify_upload "$2" "$3"); [ "$GOT" = "$4" ] && pass "$1" || { echo "  FAIL: $1 — got '$GOT', want '$4'"; FAIL=1; }; }
+
+cls "clean success → accepted" 0 \
+  "UPLOAD SUCCEEDED with no errors
+No errors uploading archive at './App.pkg'." accepted
+cls "exit 0, quiet output → accepted" 0 "Uploading... done" accepted
+# Verbatim from the FrameBison run that reported green while the upload failed.
+cls "build-number collision (-19232) → failed" 31 \
+  "ERROR: [ContentDelivery.Uploader.7814C25280] The provided entity includes an attribute with a value that has already been used (-19232) The bundle version must be higher than the previously uploaded version: '1'.
+ERROR: [altool.main] ExitFailure (31)" failed
+cls "true redundant upload (ITMS-90189) → already-present" 31 \
+  "ERROR: [altool] Redundant Binary Upload. There already exists a binary upload with build version '42' (ITMS-90189)" already-present
+cls "opaque altool error → failed" 1 "ERROR: [altool.main] network unreachable" failed
+
 echo
-[ $FAIL -eq 0 ] && echo "ALL products.py TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
+[ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
