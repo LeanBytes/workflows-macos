@@ -132,7 +132,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Cheap gate on ubuntu (like the distribute-* prepare jobs). A per-commit cache
+  # Cheap gate (like the distribute-* prepare jobs). A per-commit cache
   # marker makes each commit on main get watched exactly once; `force` overrides.
   gate:
     runs-on: [self-hosted, macOS]

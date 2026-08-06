@@ -110,7 +110,8 @@ permissions:
 jobs:
   # ── Discover + validate every Config/products/<id>.json (cheap, fail-fast) ──
   # products.py validates identity + the mandatory inline changelog and fails
-  # loudly on a bad file — so this ubuntu job gates the expensive macOS verify.
+  # loudly on a bad file — so this cheap job gates the expensive verify below.
+  # (Ran on ubuntu until v0.4.7 moved every job to self-hosted macOS.)
   discover:
     runs-on: [self-hosted, macOS]
     timeout-minutes: 5
