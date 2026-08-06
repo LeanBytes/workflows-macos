@@ -99,6 +99,45 @@ echo "== validation: two empty-id products → hard error =="
 CAP PRODUCTS_DIR="$DUAL" python3 "$PY" discover
 { [ $RC -ne 0 ] && grep -q "at most one product may omit" /tmp/pd.err; } && pass "dual-bare rejected" || bad "dual-bare should fail with the one-primary error (rc=$RC)"
 
+echo "== source-paths: a code-only change cuts a beta =="
+# Real git repos, real `git diff` — CHANGED_PRODUCTS is deliberately NOT set, so
+# these exercise the actual diff path rather than the test stub.
+# $1 = dir, $2 = the "source-paths" JSON line (empty to omit it).
+mkrepo() {
+  mkdir -p "$1/Config/products" "$1/Sources"
+  cat > "$1/Config/products/app.json" <<JSON
+{ "id": "app", "platform": "macos", "scheme": "App", "product-name": "App",
+  "bundle-id": "com.example.App", "build-direct": true,
+  $2
+  "changelog": { "versions": [ { "version": "1.0.0",
+    "items": [ { "type": "feat", "title": { "en": "x" } } ] } ] } }
+JSON
+  (
+    set -e; cd "$1"
+    git init -q . && git config user.email t@t && git config user.name t
+    echo 'let a = 1' > Sources/App.swift
+    git add -A && git commit -qm init && git tag app-v1.0.0-beta.1
+    echo 'let a = 2' > Sources/App.swift   # code-only: product file untouched
+    git add -A && git commit -qm "code only"
+  ) >/dev/null 2>&1
+}
+planbeta() { CAP bash -c "cd '$1' && PRODUCTS_DIR='$1/Config/products' GIT_TAGS='app-v1.0.0-beta.1' BUILD_NUMBER=x python3 '$PY' plan-beta"; }
+
+WITH=$(mktemp -d); mkrepo "$WITH" '"source-paths": ["Sources/**"],'
+planbeta "$WITH"
+jok "code-only change WITH source-paths → cuts beta.2" \
+  'b=json.loads(o["beta-products"]); assert [x["id"] for x in b]==["app"], b; assert b[0]["release-tag"]=="app-v1.0.0-beta.2", b[0]["release-tag"]'
+jok "source-paths stays internal — not emitted to the workflow matrix" \
+  'assert all("source-paths" not in x and "_source_paths" not in x for x in json.loads(o["beta-products"]))'
+
+WITHOUT=$(mktemp -d); mkrepo "$WITHOUT" ''
+planbeta "$WITHOUT"
+line "code-only change WITHOUT source-paths → nothing cuts" "has-any=false"
+{ grep -q '::warning::' /tmp/pd.err && grep -q 'source-paths' /tmp/pd.err; } \
+  && pass "the silent skip is now a warning naming the fix" \
+  || bad "expected a ::warning:: mentioning source-paths; got: $(cat /tmp/pd.err)"
+rm -rf "$WITH" "$WITHOUT"
+
 echo "== classify_upload: altool outcome classification =="
 # Sourced from the shipped script rather than re-implemented, so this test cannot
 # drift from what the publish steps actually run.
