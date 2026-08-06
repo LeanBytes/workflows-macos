@@ -22,17 +22,29 @@ permissions:
 
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    # Self-hosted macOS, like every other job in this repo. This was the last
+    # `ubuntu-latest` left, and it was also the only workflow that stopped
+    # dispatching — GitHub-hosted runners are a separate capacity/billing path
+    # from ours, so a block there takes out this job while every self-hosted
+    # build keeps running. Nothing here needs Linux: actionlint ships a darwin
+    # build and the tests are offline python3 + git.
+    runs-on: [self-hosted, macOS]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
       - name: Install actionlint
-        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        # Into a temp dir, not the workspace: a self-hosted runner reuses its
+        # checkout, so dropping the binary next to the sources would leave an
+        # untracked ./actionlint behind between runs.
+        run: |
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          cd "$RUNNER_TEMP/actionlint"
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
 
       - name: Lint workflows
         run: |
-          ./actionlint \
+          "$RUNNER_TEMP/actionlint/actionlint" \
             -ignore 'property "job_workflow_sha" is not defined' \
             -ignore 'shellcheck reported issue' \
             .github/workflows/*.yml
