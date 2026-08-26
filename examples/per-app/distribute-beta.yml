@@ -45,8 +45,10 @@ jobs:
     #   use-tuist: true                  # FlowMoose
     #   lfs: true
     #   # runners default to self-hosted macOS ([self-hosted, macOS]); override here, e.g.:
-    #   runs-on-build: '["self-hosted","agent-alex"]'   # pin to a specific runner
-    #   runs-on-publish: '"macos-26"'                    # or send a job back to a hosted runner
+    #   runs-on-build-direct: '["self-hosted","agent-alex"]'  # pin to a specific runner
+    #   runs-on-build-store: '"macos-26"'                # the App Store archive needs a released Xcode
+    #   runs-on-test: '"macos-26"'                       # or send a job back to a hosted runner
+    #   runs-on-publish: '"macos-26"'
     #   run-tests: true                  # gate the beta on tests (files a Jira ticket on failure)
     #   attach-release-assets: false     # skip GitHub pre-release asset upload (S3 keeps the DMG/ZIP) — saves budget
     #   artifact-retention-days: 30      # keep uploaded build/test artifacts longer than the 7-day default

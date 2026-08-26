@@ -42,7 +42,8 @@ jobs:
     #   build-app-store: true            # default a product file inherits
     #   distribute-app-store: true
     #   use-tuist: true
-    #   runs-on-build: '"macos-26"'      # runners default to self-hosted macOS; override to hosted (or a specific runner) here
+    #   runs-on-build-direct: '"macos-26"'  # runners default to self-hosted macOS; override to hosted (or a specific runner) here
+    #   runs-on-build-store: '"macos-26"'   # the App Store archive needs a released Xcode
     #   create-discussion: true          # opt-in; needs Discussions + the exact category
     #   attach-release-assets: false     # skip GitHub-Release asset upload (S3 keeps the DMG/ZIP) — saves budget
     #   artifact-retention-days: 30      # keep uploaded build artifacts longer than the 7-day default

@@ -77,7 +77,16 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
-      runs-on-build:
+      runs-on-build-direct:
+        description: "Runner for the Developer ID (direct) archive."
+        type: string
+        default: '["self-hosted","macOS"]'
+      runs-on-build-store:
+        description: "Runner for the App Store archive. Must be a released Xcode — altool rejects a bundle whose Info.plist records a beta (error 90301), and that keys off the archiving Xcode, not the uploader."
+        type: string
+        default: '["self-hosted","macOS"]'
+      runs-on-test:
+        description: "Runner for the test job."
         type: string
         default: '["self-hosted","macOS"]'
       runs-on-publish:
@@ -244,7 +253,7 @@ jobs:
     uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.7
     with:
       test-runner: ${{ inputs.test-runner }}
-      runs-on: ${{ inputs.runs-on-build }}
+      runs-on: ${{ inputs.runs-on-test }}
       lfs: ${{ inputs.lfs }}
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
       test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || needs.prepare.outputs.test-scheme }}
@@ -288,7 +297,7 @@ jobs:
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
       pre-build-script: ${{ inputs.pre-build-script }}
-      runs-on: ${{ inputs.runs-on-build }}
+      runs-on: ${{ inputs.runs-on-build-direct }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
@@ -328,7 +337,7 @@ jobs:
       has-finder-extension: ${{ matrix.product.has-finder }}
       has-quicklook-extension: ${{ matrix.product.has-quicklook }}
       use-tuist: ${{ inputs.use-tuist }}
-      runs-on: ${{ inputs.runs-on-build }}
+      runs-on: ${{ inputs.runs-on-build-store }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-app-store }}
       lfs: ${{ inputs.lfs }}

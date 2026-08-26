@@ -121,7 +121,8 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
-      runs-on-build:
+      runs-on-build-direct:
+        description: "Runner for the Developer ID (direct) archive."
         type: string
         default: '["self-hosted","macOS"]'
       runs-on-publish:
@@ -304,7 +305,7 @@ jobs:
       pre-build-script: ${{ inputs.pre-build-script }}
       has-finder-extension: ${{ needs.prepare.outputs.has-finder == 'true' }}
       has-quicklook-extension: ${{ needs.prepare.outputs.has-quicklook == 'true' }}
-      runs-on: ${{ inputs.runs-on-build }}
+      runs-on: ${{ inputs.runs-on-build-direct }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
       configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}

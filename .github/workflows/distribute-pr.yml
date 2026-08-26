@@ -50,6 +50,11 @@ on:
         type: string
         default: '["self-hosted","macOS"]'
 
+      runs-on-test:
+        description: "Runner for the test job. Defaults to self-hosted macOS; pass macos-26 for a hosted runner."
+        type: string
+        default: '["self-hosted","macOS"]'
+
       lfs:
         description: "Pull the caller repo's git LFS files on checkout (e.g. an LFS-tracked model). Off by default."
         type: boolean
@@ -256,7 +261,7 @@ jobs:
     uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.4.7
     with:
       test-runner: ${{ inputs.test-runner }}
-      runs-on: ${{ inputs.runs-on-build }}
+      runs-on: ${{ inputs.runs-on-test }}
       lfs: ${{ inputs.lfs }}
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
       test-scheme: ${{ inputs.test-scheme != '' && inputs.test-scheme || fromJSON(needs.discover.outputs.products)[0].scheme }}

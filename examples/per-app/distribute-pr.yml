@@ -20,6 +20,7 @@ jobs:
     #   use-tuist: true                                 # FlowMoose
     #   lfs: true                                       # an LFS-tracked build input
     #   runs-on-build: '"macos-26"'                     # runners default to self-hosted macOS; override to hosted here
+    #   runs-on-test: '"macos-26"'                      # the test job has its own runner
     #   run-tests: true                                 # build + test instead of compile-only
     #   test-runner: both
     #   swift-package-path: Core
