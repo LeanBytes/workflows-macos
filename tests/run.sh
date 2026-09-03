@@ -187,4 +187,26 @@ for wf in distribute-beta distribute-release; do
 done
 
 echo
+echo "== runs-on: every input-driven job takes a vars override =="
+# The per-app shell's runs-on-* input is the default; a same-named repo Variable
+# overrides it with no commit. Unset is '' (falsy), so the input must remain the
+# right-hand side of the ||, and the variable must NOT be wrapped in fromJSON —
+# it carries a bare label, not JSON.
+ro() { # var  file  input-expression
+  local got; got="$(grep -F "runs-on: \${{ vars.$1" "$ROOT/$2" || true)"
+  [ -n "$got" ] || { echo "  FAIL: $2 — no vars.$1 override on runs-on"; FAIL=1; return; }
+  grep -qF "vars.$1 || fromJSON(inputs.$3)" <<<"$got" \
+    && pass "$2 ← vars.$1" \
+    || { echo "  FAIL: $2 — override must read: vars.$1 || fromJSON(inputs.$3)"; echo "    got:$got"; FAIL=1; }
+  grep -qF "fromJSON(vars.$1" <<<"$got" && { echo "  FAIL: $2 — vars.$1 must not be fromJSON'd; it is a bare label"; FAIL=1; } || true
+}
+ro RUNS_ON_BUILD_DIRECT .github/workflows/_build-direct.yml    runs-on
+ro RUNS_ON_BUILD_STORE  .github/workflows/_build-app-store.yml runs-on
+ro RUNS_ON_TEST         .github/workflows/_test.yml            runs-on
+ro RUNS_ON_BUILD        .github/workflows/distribute-pr.yml    runs-on-build
+for wf in distribute-beta distribute-release distribute-alpha; do
+  ro RUNS_ON_PUBLISH ".github/workflows/$wf.yml" runs-on-publish
+done
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

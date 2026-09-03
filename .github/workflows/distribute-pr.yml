@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -148,7 +148,9 @@ jobs:
   # ── Compile every product (fan-out) — no signing, fast "does it build?" ──
   verify:
     needs: discover
-    runs-on: ${{ fromJSON(inputs.runs-on-build) }}
+    # `vars.RUNS_ON_BUILD` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_BUILD || fromJSON(inputs.runs-on-build) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -258,7 +260,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.2
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}

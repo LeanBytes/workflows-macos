@@ -105,8 +105,30 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 |---|---|
 | `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
 | `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
+| `RUNS_ON_BUILD_DIRECT` | *(optional, temporary)* Override the runner for the Developer ID archive — see below |
+| `RUNS_ON_BUILD_STORE` | *(optional, temporary)* Override the runner for the App Store archive |
+| `RUNS_ON_TEST` | *(optional, temporary)* Override the runner for the test job |
+| `RUNS_ON_BUILD` | *(optional, temporary)* Override the runner for the PR verify job |
+| `RUNS_ON_PUBLISH` | *(optional, temporary)* Override the runner for the publish job |
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.1`.
+#### Moving a job off the self-hosted Mac
+
+The per-app shell's `runs-on-*` inputs are the standing answer to where a job runs. The `RUNS_ON_*` Variables above are the temporary one: each overrides the matching input, so a job can be moved without a commit to the app repo, and moved back by deleting the variable.
+
+```
+Repo → Settings → Secrets and variables → Actions → Variables
+  RUNS_ON_BUILD_STORE = macos-26
+```
+
+The next run's App Store archive goes to a GitHub-hosted `macos-26` image; `build-direct`, tests, and publish stay wherever the shell put them. Delete the variable and the next run is back to the input. Nothing is baked in — the override is read fresh on every run.
+
+The case this exists for: a self-hosted Mac on a beta Xcode. `notarytool` accepts a bundle built with one, so the Direct channel keeps working, but `altool` rejects it (error 90301), so every App Store upload fails until Apple ships the release Xcode. `RUNS_ON_BUILD_STORE=macos-26` sends just the store archive to a hosted image for those weeks. The same knob covers a Mac that is down, upgrading, or busy.
+
+Unlike the `runs-on-*` inputs, these take a **bare label** (`macos-26`), not JSON — a Variable is typed into a text box, so requiring `"macos-26"` with the quotes would be a footgun for no gain. That means one label per override, which is the point: an override always aims away from the multi-label self-hosted set and at a single hosted image. A permanent multi-label target is a real decision and belongs in the shell's input.
+
+An unset variable is `''`, which is falsy, so a repo that sets none behaves exactly as before. `prepare` / `discover` / `gate` are deliberately not overridable — they run git and python for a few seconds, and if the Mac is unreachable the run stalls there whatever the build jobs say.
+
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.2`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -168,14 +190,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.5.1`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.5.2`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.1
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
     secrets: inherit
     with:
       # …
@@ -350,10 +372,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.1
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.1`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.2`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

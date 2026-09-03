@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.1
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.2
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -289,7 +289,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.1
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.2
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -325,7 +325,9 @@ jobs:
   publish-alpha:
     needs: [prepare, build-direct]
     if: needs.build-direct.result == 'success'
-    runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
+    # `vars.RUNS_ON_PUBLISH` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_PUBLISH || fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 20
     env:
       MARKETING: ${{ needs.prepare.outputs.marketing }}
