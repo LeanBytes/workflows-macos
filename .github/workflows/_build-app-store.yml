@@ -150,7 +150,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # `vars.RUNS_ON_BUILD_STORE` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_BUILD_STORE || fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
 
     steps:

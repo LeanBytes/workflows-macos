@@ -159,7 +159,9 @@ jobs:
   test:
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    # `vars.RUNS_ON_TEST` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_TEST || fromJSON(inputs.runs-on) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
     env:
       TEST_RUNNER: ${{ inputs.test-runner }}
