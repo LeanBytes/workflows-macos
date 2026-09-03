@@ -234,6 +234,9 @@ jobs:
         run: bash .shared-ci/.github/scripts/build-direct.sh signing
 
       - name: Archive
+        # Bounded so a signing stall fails in minutes with a diagnosable step
+        # rather than wedging until the 60-minute job timeout (see #9).
+        timeout-minutes: 30
         shell: bash
         run: bash .shared-ci/.github/scripts/build-direct.sh archive
 

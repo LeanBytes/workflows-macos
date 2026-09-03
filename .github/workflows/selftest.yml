@@ -22,13 +22,13 @@ permissions:
 
 jobs:
   lint-and-test:
-    # Self-hosted macOS, like every other job in this repo. This was the last
-    # `ubuntu-latest` left, and it was also the only workflow that stopped
-    # dispatching — GitHub-hosted runners are a separate capacity/billing path
-    # from ours, so a block there takes out this job while every self-hosted
-    # build keeps running. Nothing here needs Linux: actionlint ships a darwin
-    # build and the tests are offline python3 + git.
-    runs-on: [self-hosted, macOS]
+    # ubuntu-latest, and NOT self-hosted like the rest of this repo. No
+    # self-hosted runner is attached to workflows-macos — the org's macOS runner
+    # serves the app repos — so `[self-hosted, macOS]` here queued forever and
+    # this workflow silently did not run for 27 days (a queued job reports
+    # nothing, so it never went red). Nothing here needs a Mac anyway: actionlint
+    # is a static binary and the tests are offline python3 + git.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

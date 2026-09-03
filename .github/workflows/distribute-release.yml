@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.4.7
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.1
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -227,7 +227,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.4.7
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.1
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -268,7 +268,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.4.7
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.1
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -301,10 +301,14 @@ jobs:
 
   publish-release:
     needs: [prepare, build-direct, build-app-store]
+    # 'skipped' must stay permitted — a product that builds only one channel
+    # legitimately skips the other — but 'cancelled' must not: a wedged or
+    # evicted build job would otherwise publish a half-built release with one
+    # channel silently missing (see #10).
     if: |
       always() &&
-      needs.build-direct.result != 'failure' &&
-      needs.build-app-store.result != 'failure' &&
+      needs.build-direct.result != 'failure' && needs.build-direct.result != 'cancelled' &&
+      needs.build-app-store.result != 'failure' && needs.build-app-store.result != 'cancelled' &&
       (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
     runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 30

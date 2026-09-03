@@ -60,7 +60,10 @@
 # details that must NOT drift: the `ditto … --norsrc --noextattr --noacl`
 # packaging flags (without them, __MACOSX/._* companion files break the embedded
 # Sparkle.framework signature → Gatekeeper rejection); MARKETING_VERSION /
-# CURRENT_PROJECT_VERSION at archive time; method=developer-id; and the
+# CURRENT_PROJECT_VERSION at archive time; method=developer-id; the
+# `set-keychain-settings` + `unlock-keychain` pair after create-keychain
+# (a fresh keychain auto-locks after 300s idle and hangs codesign forever
+# on any build that takes longer than that to reach signing); and the
 # spctl + `codesign --deep --strict` + `stapler validate` verification set.
 
 set -euo pipefail
@@ -201,6 +204,17 @@ phase_signing() {
   echo "$DEVELOPER_ID_P12_BASE64" | base64 --decode > "$WORK_DIR/certificate.p12"
   security delete-keychain build.keychain 2>/dev/null || true
   security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+  # A freshly created keychain inherits macOS's defaults: lock-on-sleep and a
+  # 300s idle-lock. Nothing touches the keychain while the compiler runs, so on
+  # any build that takes longer than five minutes to reach signing the timer
+  # expires mid-archive and codesign blocks forever on an unlock prompt no
+  # headless runner ever answers (the job then burns to its timeout with no
+  # error). `set-key-partition-list` does not cover this — it suppresses the
+  # authorization prompt for an UNLOCKED keychain, not the unlock prompt for a
+  # locked one. No -t and no -l ⇒ no timeout, no sleep-lock; the keychain is
+  # ephemeral and deleted in phase_cleanup.
+  security set-keychain-settings build.keychain
+  security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
   security import "$WORK_DIR/certificate.p12" \
     -k build.keychain \
     -P "$DEVELOPER_ID_PASSWORD" \
