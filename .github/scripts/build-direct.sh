@@ -60,7 +60,10 @@
 # details that must NOT drift: the `ditto … --norsrc --noextattr --noacl`
 # packaging flags (without them, __MACOSX/._* companion files break the embedded
 # Sparkle.framework signature → Gatekeeper rejection); MARKETING_VERSION /
-# CURRENT_PROJECT_VERSION at archive time; method=developer-id; and the
+# CURRENT_PROJECT_VERSION at archive time; method=developer-id; the
+# `set-keychain-settings` + `unlock-keychain` pair after create-keychain
+# (a fresh keychain auto-locks after 300s idle and hangs codesign forever
+# on any build that takes longer than that to reach signing); and the
 # spctl + `codesign --deep --strict` + `stapler validate` verification set.
 
 set -euo pipefail
