@@ -354,11 +354,15 @@ jobs:
 
   publish-beta:
     needs: [prepare, test, build-direct, build-app-store]
+    # 'skipped' must stay permitted — a product that builds only one channel
+    # legitimately skips the other — but 'cancelled' must not: a wedged or
+    # evicted build job would otherwise publish a half-built beta, pushing the
+    # tag and burning the counter with one channel silently missing (see #10).
     if: |
       always() &&
       needs.test.result != 'failure' &&
-      needs.build-direct.result != 'failure' &&
-      needs.build-app-store.result != 'failure' &&
+      needs.build-direct.result != 'failure' && needs.build-direct.result != 'cancelled' &&
+      needs.build-app-store.result != 'failure' && needs.build-app-store.result != 'cancelled' &&
       (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
     runs-on: ${{ fromJSON(inputs.runs-on-publish) }}
     timeout-minutes: 30

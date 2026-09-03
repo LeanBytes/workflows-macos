@@ -157,4 +157,34 @@ cls "true redundant upload (ITMS-90189) → already-present" 31 \
 cls "opaque altool error → failed" 1 "ERROR: [altool.main] network unreachable" failed
 
 echo
+echo "== signing: every ephemeral keychain disarms its auto-lock =="
+# A keychain straight out of `security create-keychain` inherits lock-on-sleep +
+# a 300s idle-lock, which fires mid-archive and hangs codesign on an unlock
+# prompt no headless runner answers. Both signing paths must follow the create
+# with `set-keychain-settings` (no -t/-l ⇒ no timeout) and an explicit unlock.
+kc() { # name file
+  local body; body="$(grep -A 15 'security create-keychain' "$ROOT/$2")"
+  grep -q 'security set-keychain-settings' <<<"$body" \
+    && grep -q 'security unlock-keychain' <<<"$body" \
+    && pass "$1" || { echo "  FAIL: $1 — create-keychain is not followed by set-keychain-settings + unlock-keychain"; FAIL=1; }
+  if grep -qE 'set-keychain-settings.*(-[a-z]*[tl])' <<<"$body"; then
+    echo "  FAIL: $1 — set-keychain-settings must carry no -t/-l, or the fuse is only lengthened"; FAIL=1
+  else
+    pass "$1 — no -t/-l, so no timeout at all"
+  fi
+}
+kc "build-direct.sh"      .github/scripts/build-direct.sh
+kc "_build-app-store.yml" .github/workflows/_build-app-store.yml
+
+echo
+echo "== publish gate: a cancelled build must not publish =="
+# `!= 'failure'` alone lets a wedged/evicted build job through, shipping a
+# half-built beta. 'skipped' stays permitted (single-channel products).
+for wf in distribute-beta distribute-release; do
+  g="$(grep -c "result != 'cancelled'" "$ROOT/.github/workflows/$wf.yml")"
+  [ "$g" -eq 2 ] && pass "$wf.yml excludes cancelled for both channels" \
+    || { echo "  FAIL: $wf.yml — expected 2 \"result != 'cancelled'\" guards, found $g"; FAIL=1; }
+done
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
