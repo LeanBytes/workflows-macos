@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.3
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -45,6 +45,10 @@ on:
         type: string
         default: ""
 
+      runs-on-discover:
+        description: "Runner for the discover job (globs the product files). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
+        type: string
+        default: '["self-hosted","macOS"]'
       runs-on-build:
         description: "JSON-encoded runner label or array. Defaults to self-hosted macOS; pass macos-26 for a hosted runner."
         type: string
@@ -118,7 +122,9 @@ jobs:
   # loudly on a bad file — so this cheap job gates the expensive verify below.
   # (Ran on ubuntu until v0.4.7 moved every job to self-hosted macOS.)
   discover:
-    runs-on: [self-hosted, macOS]
+    # `vars.RUNS_ON_DISCOVER` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_DISCOVER || fromJSON(inputs.runs-on-discover) }}
     timeout-minutes: 5
     outputs:
       products: ${{ steps.d.outputs.products }}
@@ -260,7 +266,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.3
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}

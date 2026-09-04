@@ -200,12 +200,26 @@ ro() { # var  file  input-expression
     || { echo "  FAIL: $2 — override must read: vars.$1 || fromJSON(inputs.$3)"; echo "    got:$got"; FAIL=1; }
   grep -qF "fromJSON(vars.$1" <<<"$got" && { echo "  FAIL: $2 — vars.$1 must not be fromJSON'd; it is a bare label"; FAIL=1; } || true
 }
+# The invariant, not just the seven known sites: no workflow may hardcode a
+# runner. A literal runs-on is a job the caller cannot point anywhere, and if
+# anything needs: it the whole pipeline deadlocks — silently, because a job
+# queued for a runner that does not exist never goes red. selftest.yml is the
+# one exception (this repo has no self-hosted runner at all; see #14).
+lit="$(grep -l "^    runs-on: [^$]" "$ROOT"/.github/workflows/*.yml 2>/dev/null \
+       | xargs -I{} basename {} | grep -vx 'selftest.yml' || true)"
+[ -z "$lit" ] && pass "no workflow hardcodes a runner (except selftest.yml)" \
+  || { echo "  FAIL: literal runs-on in: $lit — every job must take an input"; FAIL=1; }
+
 ro RUNS_ON_BUILD_DIRECT .github/workflows/_build-direct.yml    runs-on
 ro RUNS_ON_BUILD_STORE  .github/workflows/_build-app-store.yml runs-on
 ro RUNS_ON_TEST         .github/workflows/_test.yml            runs-on
 ro RUNS_ON_BUILD        .github/workflows/distribute-pr.yml    runs-on-build
 for wf in distribute-beta distribute-release distribute-alpha; do
   ro RUNS_ON_PUBLISH ".github/workflows/$wf.yml" runs-on-publish
+done
+ro RUNS_ON_DISCOVER .github/workflows/distribute-pr.yml runs-on-discover
+for wf in distribute-beta distribute-release distribute-alpha; do
+  ro RUNS_ON_PREPARE ".github/workflows/$wf.yml" runs-on-prepare
 done
 
 echo

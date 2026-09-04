@@ -110,6 +110,8 @@ Only repo-level **infrastructure** lives in Variables — product identity moved
 | `RUNS_ON_TEST` | *(optional, temporary)* Override the runner for the test job |
 | `RUNS_ON_BUILD` | *(optional, temporary)* Override the runner for the PR verify job |
 | `RUNS_ON_PUBLISH` | *(optional, temporary)* Override the runner for the publish job |
+| `RUNS_ON_DISCOVER` | *(optional, temporary)* Override the runner for the PR discover job |
+| `RUNS_ON_PREPARE` | *(optional, temporary)* Override the runner for the beta/release/alpha prepare job |
 
 #### Moving a job off the self-hosted Mac
 
@@ -126,9 +128,11 @@ The case this exists for: a self-hosted Mac on a beta Xcode. `notarytool` accept
 
 Unlike the `runs-on-*` inputs, these take a **bare label** (`macos-26`), not JSON — a Variable is typed into a text box, so requiring `"macos-26"` with the quotes would be a footgun for no gain. That means one label per override, which is the point: an override always aims away from the multi-label self-hosted set and at a single hosted image. A permanent multi-label target is a real decision and belongs in the shell's input.
 
-An unset variable is `''`, which is falsy, so a repo that sets none behaves exactly as before. `prepare` / `discover` / `gate` are deliberately not overridable — they run git and python for a few seconds, and if the Mac is unreachable the run stalls there whatever the build jobs say.
+An unset variable is `''`, which is falsy, so a repo that sets none behaves exactly as before.
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.2`.
+**Pin `prepare` / `discover` too, or nothing runs.** These are the coordination jobs, and they go first — every build, test and publish job `needs:` one of them. A repo with no self-hosted runner that pins only the build inputs still deadlocks on the very first job, and it deadlocks *silently*: a job waiting for a runner that does not exist stays `queued` and never turns red. `timeout-minutes` does not help, because that clock only starts once a job is running. The two `gate` jobs need no variable of their own — each follows the job it gates (`RUNS_ON_TEST` for `_test.yml`, the `runs-on` input for `memory-watch.yml`), so pinning that one moves both.
+
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.3`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -190,14 +194,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.5.2`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.5.3`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.3
     secrets: inherit
     with:
       # …
@@ -372,10 +376,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.2
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.3
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.2`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.3`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

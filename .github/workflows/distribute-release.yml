@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.3
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -82,6 +82,10 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
+      runs-on-prepare:
+        description: "Runner for the prepare job (parses the release tag). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
+        type: string
+        default: '["self-hosted","macOS"]'
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -175,7 +179,9 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: [self-hosted, macOS]
+    # `vars.RUNS_ON_PREPARE` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_PREPARE || fromJSON(inputs.runs-on-prepare) }}
     timeout-minutes: 5
     outputs:
       target-id: ${{ steps.plan.outputs.target-id }}
@@ -227,7 +233,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -268,7 +274,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.3
     with:
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}

@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.3
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -121,6 +121,10 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
+      runs-on-prepare:
+        description: "Runner for the prepare job (resolves the product + alpha counter). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
+        type: string
+        default: '["self-hosted","macOS"]'
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -164,7 +168,9 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: [self-hosted, macOS]
+    # `vars.RUNS_ON_PREPARE` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_PREPARE || fromJSON(inputs.runs-on-prepare) }}
     timeout-minutes: 5
     outputs:
       scheme: ${{ steps.compute.outputs.scheme }}
@@ -289,7 +295,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
     with:
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
