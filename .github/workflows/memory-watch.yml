@@ -135,7 +135,10 @@ jobs:
   # Cheap gate (like the distribute-* prepare jobs). A per-commit cache
   # marker makes each commit on main get watched exactly once; `force` overrides.
   gate:
-    runs-on: [self-hosted, macOS]
+    # Follows the watch job's runner: the gate is seconds of git, and placing it
+    # apart would make it the one job a caller cannot point away from a
+    # self-hosted Mac — `watch` needs it, so it would deadlock the rest.
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}

@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.3
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +77,10 @@ on:
       extra-xcodebuild-args:
         type: string
         default: ""
+      runs-on-prepare:
+        description: "Runner for the prepare job (plans the beta cutting set). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
+        type: string
+        default: '["self-hosted","macOS"]'
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -199,7 +203,9 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: [self-hosted, macOS]
+    # `vars.RUNS_ON_PREPARE` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_PREPARE || fromJSON(inputs.runs-on-prepare) }}
     timeout-minutes: 5
     outputs:
       products: ${{ steps.plan.outputs.beta-products }}
@@ -250,7 +256,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.3
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
@@ -280,7 +286,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
     with:
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
@@ -321,7 +327,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.3
     with:
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
