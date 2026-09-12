@@ -21,8 +21,18 @@
 #     ### New Features    (type: feat)
 #     ### Bug Fixes       (type: fix)
 #     ### Improvements    (type: core)
-# Empty sections are omitted. `chore` and any other unrecognized type are
-# silently skipped — they MUST NOT leak into the customer-facing notes.
+#     ### Localization    (type: lang)
+#     ### Announcements   (type: release)
+# Empty sections are omitted. These five are exactly the types the apps' own
+# "What's New" views render, so the two stay aligned — they drifted before, and
+# six MacPacker releases shipped without their `lang` items (#17).
+#
+# `chore` is dropped on purpose: it is internal work and MUST NOT leak into the
+# customer-facing notes. Any OTHER type is also dropped — a stray internal note
+# must not reach customers on the strength of a typo — but loudly, via a
+# ::warning:: and a $GITHUB_STEP_SUMMARY line, because stdout here IS the
+# release notes (callers redirect it to a file) and a silent drop is how this
+# went unnoticed for six releases.
 #
 # If the version isn't found (or the JSON has no `versions`), emit a
 # ::warning:: and exit 0 with empty stdout. update-appcast.sh tolerates
@@ -80,9 +90,22 @@ SECTIONS = [
     ("New Features", ("feat",)),
     ("Bug Fixes", ("fix",)),
     ("Improvements", ("core",)),
+    ("Localization", ("lang",)),
+    ("Announcements", ("release",)),
 ]
-# chore is intentionally NOT mapped — it was replaced by core. Any chore
-# items in legacy entries (and any unrecognized type) are dropped.
+# Dropped on purpose, without a warning: chore was replaced by core, and legacy
+# entries still carry it. Anything outside SECTIONS *and* this set is a typo or
+# a type the apps grew without telling CI — dropped too, but reported.
+SILENT_DROP = ("chore",)
+
+
+def warn(msg):
+    """Report to the step log and the run page. NEVER stdout — that is the notes."""
+    print(f"::warning::{msg}", file=sys.stderr)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write(f"> [!WARNING]\n> {msg}\n\n")
 
 buckets = {label: [] for label, _ in SECTIONS}
 for item in target.get("items") or []:
@@ -101,7 +124,14 @@ for item in target.get("items") or []:
         if type_ in accepted:
             buckets[label].append(title)
             break
-    # No "else" — unmatched types are skipped.
+    else:
+        if type_ not in SILENT_DROP:
+            warn(
+                f"{path}: unknown changelog type {type_ or '(empty)'!r} on "
+                f"version {target.get('version', '<unknown>')} — dropped from the "
+                f"release notes and the appcast: {title!r}. Known types: "
+                f"{', '.join(t for _, a in SECTIONS for t in a)}."
+            )
 
 rendered = []
 for label, _ in SECTIONS:

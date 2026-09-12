@@ -79,6 +79,16 @@ on:
         default: "direct-build"
 
       # ── Runner ─────────────────────────────────────────────────────────────
+      job-timeout-minutes:
+        description: "Ceiling for the whole build job. Raise it for a slow archive; lower it to fail fast. Keep archive-timeout-minutes below it, or the step cap bites first."
+        type: number
+        default: 60
+
+      archive-timeout-minutes:
+        description: "Ceiling for the Archive step alone, so a signing stall fails at a named step instead of eating the job. Must stay under job-timeout-minutes."
+        type: number
+        default: 30
+
       runs-on:
         description: "JSON-encoded runner label or array. Defaults to self-hosted macOS; pass a hosted label like macos-26 to override."
         type: string
@@ -165,7 +175,7 @@ jobs:
     # `vars.RUNS_ON_BUILD_DIRECT` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
     runs-on: ${{ vars.RUNS_ON_BUILD_DIRECT || fromJSON(inputs.runs-on) }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.job-timeout-minutes }}
 
     # Set once at the job level; every build-direct.sh phase reads these. The
     # script reconstructs all paths + the profile name from this env, so each
@@ -238,7 +248,7 @@ jobs:
       - name: Archive
         # Bounded so a signing stall fails in minutes with a diagnosable step
         # rather than wedging until the 60-minute job timeout (see #9).
-        timeout-minutes: 30
+        timeout-minutes: ${{ inputs.archive-timeout-minutes }}
         shell: bash
         run: bash .shared-ci/.github/scripts/build-direct.sh archive
 

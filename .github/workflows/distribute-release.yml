@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.4
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -86,6 +86,16 @@ on:
         description: "Runner for the prepare job (parses the release tag). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
         type: string
         default: '["self-hosted","macOS"]'
+      build-timeout-minutes:
+        description: "Ceiling for each build job (Developer ID and App Store). Forwarded to the build callees."
+        type: number
+        default: 60
+
+      archive-timeout-minutes:
+        description: "Ceiling for the Archive step inside each build job. Must stay under build-timeout-minutes."
+        type: number
+        default: 30
+
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -233,8 +243,10 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.4
     with:
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
@@ -274,8 +286,10 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.4
     with:
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.version }}
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}

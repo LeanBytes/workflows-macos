@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.4
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -125,6 +125,16 @@ on:
         description: "Runner for the prepare job (resolves the product + alpha counter). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
         type: string
         default: '["self-hosted","macOS"]'
+      build-timeout-minutes:
+        description: "Ceiling for each build job (Developer ID and App Store). Forwarded to the build callees."
+        type: number
+        default: 60
+
+      archive-timeout-minutes:
+        description: "Ceiling for the Archive step inside each build job. Must stay under build-timeout-minutes."
+        type: number
+        default: 30
+
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -295,8 +305,10 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.4
     with:
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ needs.prepare.outputs.artifact-label }}
