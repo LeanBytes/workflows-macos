@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.3
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.4
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +81,16 @@ on:
         description: "Runner for the prepare job (plans the beta cutting set). Runs FIRST and every other job needs it, so a repo with no self-hosted Mac must point this at a hosted image too."
         type: string
         default: '["self-hosted","macOS"]'
+      build-timeout-minutes:
+        description: "Ceiling for each build job (Developer ID and App Store). Forwarded to the build callees."
+        type: number
+        default: 60
+
+      archive-timeout-minutes:
+        description: "Ceiling for the Archive step inside each build job. Must stay under build-timeout-minutes."
+        type: number
+        default: 30
+
       runs-on-build-direct:
         description: "Runner for the Developer ID (direct) archive."
         type: string
@@ -256,7 +266,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.4
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
@@ -286,8 +296,10 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.4
     with:
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ matrix.product.artifact-label }}
@@ -327,8 +339,10 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.3
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.4
     with:
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)
       build-number: ${{ needs.prepare.outputs.build-number }}
       artifact-label: ${{ matrix.product.artifact-label }}

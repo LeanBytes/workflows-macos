@@ -223,4 +223,57 @@ for wf in distribute-beta distribute-release distribute-alpha; do
 done
 
 echo
+echo "== changelog: every type the apps render reaches the notes =="
+# The apps' What's New views know feat/fix/core/lang/release. CI knew three, so
+# six MacPacker releases shipped without their lang items (#17). chore stays a
+# silent drop; anything else must be dropped LOUDLY, never silently, and never
+# onto stdout — stdout IS the release notes.
+CL="$ROOT/.github/scripts/changelog-from-json.sh"
+cat > /tmp/cl-types.json <<'JSON'
+{"versions":[{"version":"1.0.0","items":[
+  {"type":"feat","title":{"en":"F"}},   {"type":"fix","title":{"en":"B"}},
+  {"type":"core","title":{"en":"C"}},   {"type":"lang","title":{"en":"L"}},
+  {"type":"release","title":{"en":"A"}},{"type":"chore","title":{"en":"Internal"}},
+  {"type":"l10n","title":{"en":"Typo"}}
+]}]}
+JSON
+SUM=/tmp/cl-summary.md; : > "$SUM"
+OUT="$(CHANGELOG_PATH=/tmp/cl-types.json VERSION=1.0.0 GITHUB_STEP_SUMMARY="$SUM" bash "$CL" 2>/tmp/cl.err)"
+for sec in "New Features" "Bug Fixes" "Improvements" "Localization" "Announcements"; do
+  grep -qxF "### $sec" <<<"$OUT" && pass "renders ### $sec" \
+    || { echo "  FAIL: '### $sec' missing from the notes"; FAIL=1; }
+done
+grep -q "Internal" <<<"$OUT" && { echo "  FAIL: chore leaked into customer-facing notes"; FAIL=1; } \
+  || pass "chore dropped from the notes"
+grep -q "chore" /tmp/cl.err && { echo "  FAIL: chore warned about; it is a deliberate silent drop"; FAIL=1; } \
+  || pass "chore dropped silently (no warning)"
+grep -q "Typo" <<<"$OUT" && { echo "  FAIL: unknown type 'l10n' rendered; it must be dropped"; FAIL=1; } \
+  || pass "unknown type dropped from the notes"
+grep -q "::warning::.*l10n" /tmp/cl.err && pass "unknown type warned on stderr" \
+  || { echo "  FAIL: unknown type 'l10n' dropped silently — the #17 bug"; FAIL=1; }
+grep -q "l10n" "$SUM" && pass "unknown type reaches \$GITHUB_STEP_SUMMARY" \
+  || { echo "  FAIL: unknown type missing from the step summary"; FAIL=1; }
+grep -q "::warning::" <<<"$OUT" && { echo "  FAIL: a warning reached stdout — stdout is the release notes"; FAIL=1; } \
+  || pass "warnings never touch stdout"
+
+echo
+echo "== timeouts: the build ceilings are callable, not literals =="
+# Parameterising the job ceiling alone would be a trap: the Archive step's own
+# cap would silently bite first for anyone who raised the job (#18).
+for f in _build-direct _build-app-store; do
+  b="$ROOT/.github/workflows/$f.yml"
+  grep -qF 'timeout-minutes: ${{ inputs.job-timeout-minutes }}' "$b" \
+    && grep -qF 'timeout-minutes: ${{ inputs.archive-timeout-minutes }}' "$b" \
+    && pass "$f.yml: job + archive ceilings both take inputs" \
+    || { echo "  FAIL: $f.yml still hardcodes a build or archive timeout"; FAIL=1; }
+done
+for wf in distribute-beta distribute-release distribute-alpha; do
+  b="$ROOT/.github/workflows/$wf.yml"
+  n="$(grep -c 'job-timeout-minutes: ${{ inputs.build-timeout-minutes }}' "$b" || true)"
+  c="$(grep -c '_build-direct.yml@\|_build-app-store.yml@' "$b" || true)"
+  [ "$n" = "$c" ] && [ "$n" != "0" ] && pass "$wf.yml forwards the ceilings to all $c build call(s)" \
+    || { echo "  FAIL: $wf.yml forwards to $n of $c build call(s) — an input nothing forwards is unreachable"; FAIL=1; }
+done
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
