@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.7
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -309,7 +309,7 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.7
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
