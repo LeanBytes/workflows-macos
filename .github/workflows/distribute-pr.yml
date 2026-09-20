@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.7
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.8
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -295,13 +295,26 @@ jobs:
           POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
         run: |
           set -euo pipefail
-          settings=$(xcodebuild -showBuildSettings \
+          # stderr is captured rather than discarded: a bad scheme or a broken
+          # project makes this fail, and with 2>/dev/null the step would die at
+          # the assignment with no output at all.
+          if ! settings=$(xcodebuild -showBuildSettings \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
             -destination "generic/platform=macOS" \
-            ${{ inputs.extra-xcodebuild-args }} 2>/dev/null)
-          dir=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}')
-          name=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}')
+            ${{ inputs.extra-xcodebuild-args }} 2>"$RUNNER_TEMP/sbs.err"); then
+            echo "::error::xcodebuild -showBuildSettings failed for scheme '$SCHEME' (configuration '$CONFIGURATION')"
+            cat "$RUNNER_TEMP/sbs.err" >&2
+            exit 1
+          fi
+          # A here-string, NOT a pipe. awk exits at the first match; through a
+          # pipe that leaves printf writing into a closed reader, and once the
+          # settings dump passes the 64 KiB pipe buffer printf takes SIGPIPE,
+          # which pipefail turns into a failed step. Any scheme with more than
+          # one target clears 64 KiB — MacPacker's is 124,635 bytes (#28). Bash
+          # backs <<< with a temp file, so there is no reader to disappear.
+          dir=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' <<<"$settings")
+          name=$(awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}' <<<"$settings")
           [ -n "$dir" ] && [ -n "$name" ] && [ -e "$dir/$name" ] || {
             echo "::error::could not locate the built product for scheme '$SCHEME' (configuration '$CONFIGURATION')"
             exit 1
@@ -437,13 +450,26 @@ jobs:
           POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
         run: |
           set -euo pipefail
-          settings=$(xcodebuild -showBuildSettings \
+          # stderr is captured rather than discarded: a bad scheme or a broken
+          # project makes this fail, and with 2>/dev/null the step would die at
+          # the assignment with no output at all.
+          if ! settings=$(xcodebuild -showBuildSettings \
             -scheme "$SCHEME" \
             -configuration "$CONFIGURATION" \
             -destination "generic/platform=macOS" \
-            ${{ inputs.extra-xcodebuild-args }} 2>/dev/null)
-          dir=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}')
-          name=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}')
+            ${{ inputs.extra-xcodebuild-args }} 2>"$RUNNER_TEMP/sbs.err"); then
+            echo "::error::xcodebuild -showBuildSettings failed for scheme '$SCHEME' (configuration '$CONFIGURATION')"
+            cat "$RUNNER_TEMP/sbs.err" >&2
+            exit 1
+          fi
+          # A here-string, NOT a pipe. awk exits at the first match; through a
+          # pipe that leaves printf writing into a closed reader, and once the
+          # settings dump passes the 64 KiB pipe buffer printf takes SIGPIPE,
+          # which pipefail turns into a failed step. Any scheme with more than
+          # one target clears 64 KiB — MacPacker's is 124,635 bytes (#28). Bash
+          # backs <<< with a temp file, so there is no reader to disappear.
+          dir=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' <<<"$settings")
+          name=$(awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}' <<<"$settings")
           [ -n "$dir" ] && [ -n "$name" ] && [ -e "$dir/$name" ] || {
             echo "::error::could not locate the built product for scheme '$SCHEME' (configuration '$CONFIGURATION')"
             exit 1
@@ -457,7 +483,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.7
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.8
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
