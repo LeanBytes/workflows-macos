@@ -389,4 +389,54 @@ grep -q 'build-direct.sh post-build' "$W/_build-direct.yml" \
   || { echo "  FAIL: post-build must be a build-direct.sh phase invoked by a matching step"; FAIL=1; }
 
 echo
+echo "== post-build: resolving the product survives a huge settings dump =="
+# `awk … exit` behind a PIPE leaves printf writing into a closed reader. Once
+# the dump passes the 64 KiB pipe buffer, printf takes SIGPIPE and pipefail
+# fails the step — so the hook died on any scheme with more than one target,
+# while a single-target scheme passed on output size alone (#28). A here-string
+# is a temp file: no reader to disappear.
+BIG=/tmp/sbs-big.txt
+python3 - "$BIG" <<'PYGEN'
+import sys
+L = ["    ACTION = build",
+     "    BUILT_PRODUCTS_DIR = /Users/x/DerivedData/Build/Products/Release Store",
+     "    FULL_PRODUCT_NAME = My App.app"]
+L += ["    SETTING_%05d = padding-%s" % (i, "x" * 40) for i in range(3000)]
+open(sys.argv[1], "w").write("\n".join(L) + "\n")
+PYGEN
+sz=$(wc -c < "$BIG" | tr -d ' ')
+[ "$sz" -gt 65536 ] && pass "fixture is ${sz}B — past the 64 KiB pipe buffer" \
+  || { echo "  FAIL: fixture only ${sz}B, would not reach the buffer limit"; FAIL=1; }
+
+# The extraction exactly as both legs run it. Repeated: the pipe form's failure
+# is a race (9/10 on a real dump), so pin the fix, not the bug.
+extract() {
+  set -euo pipefail
+  local settings; settings=$(cat "$BIG")
+  local d n
+  d=$(awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}' <<<"$settings")
+  n=$(awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}' <<<"$settings")
+  printf '%s/%s' "$d" "$n"
+}
+bad=0
+for _ in 1 2 3 4 5; do
+  GOT=$(extract 2>/dev/null) || { bad=$((bad+1)); continue; }
+  [ "$GOT" = "/Users/x/DerivedData/Build/Products/Release Store/My App.app" ] || bad=$((bad+1))
+done
+[ "$bad" -eq 0 ] && pass "5/5 clean extractions, space in the path preserved" \
+  || { echo "  FAIL: $bad/5 extractions failed or returned the wrong path"; FAIL=1; }
+
+PRWF="$ROOT/.github/workflows/distribute-pr.yml"
+grep -q "printf '%s" "$PRWF" \
+  && { echo "  FAIL: a printf|awk pipe is back in distribute-pr.yml — SIGPIPE on any multi-target scheme (#28)"; FAIL=1; } \
+  || pass "no printf|awk pipe remains"
+n=$(grep -c "awk -F' = ' '/^ \*BUILT_PRODUCTS_DIR = /{print \$2; exit}' <<<" "$PRWF" || true)
+[ "$n" = "2" ] && pass "both verify legs use the here-string form" \
+  || { echo "  FAIL: expected 2 here-string extractions, found $n — the store leg passes on size alone"; FAIL=1; }
+n=$(grep -c "xcodebuild -showBuildSettings failed for scheme" "$PRWF" || true)
+[ "$n" = "2" ] && pass "both legs surface a showBuildSettings failure instead of dying silently" \
+  || { echo "  FAIL: showBuildSettings stderr is discarded in $((2-n)) leg(s)"; FAIL=1; }
+rm -f "$BIG"
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
