@@ -10,12 +10,25 @@ on:
   push:
     branches: [main]
 
+  # Manual re-cut. Normally a beta only happens when a product's file (or its
+  # source-paths) changed since its last beta; tick the box to ship one anyway —
+  # after a flaky runner, a toolchain or dependency bump, or to reship the same
+  # code. It does NOT override "already released": bump the changelog version
+  # for that. Run it against main; the beta flow pushes tags and cuts
+  # pre-releases, and distribute-alpha is the one meant for feature branches.
+  workflow_dispatch:
+    inputs:
+      force-beta:
+        description: "Cut a beta even if nothing changed"
+        type: boolean
+        default: false
+
 permissions:
   contents: write
 
 jobs:
   beta:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.6
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.7
     # `secrets: inherit` only works same-org; the explicit list works universally.
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
@@ -37,8 +50,12 @@ jobs:
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # SPARKLE_ED_PRIVATE_KEY:       ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}     # if any product distributes appcast
       # JIRA_API_TOKEN:               ${{ secrets.JIRA_API_TOKEN }}             # if run-tests
+    with:
+      # false on a push (the input does not exist there), true only when the box
+      # is ticked on a manual run. Keep this line even if you add nothing else.
+      force-beta: ${{ inputs.force-beta || false }}
     # ── Channel defaults a product file inherits when it omits them ─────────
-    # with:
+    # Uncomment what you need — they belong under the `with:` above.
     #   build-app-store: true            # default; a product file overrides per product
     #   distribute-app-store: true
     #   distribute-beta-appcast: true    # FlowMoose (Sparkle beta channel)

@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.6
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.7
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,6 +139,11 @@ on:
         description: "Attach the DMG/ZIP to the GitHub pre-release. Default true. Set false to save GitHub storage/bandwidth — the DMG/ZIP still upload to S3 (the real distribution) and the appcast points there; only the redundant GitHub copy is skipped. Notes + tag are still created."
         type: boolean
         default: true
+
+      force-beta:
+        description: "Cut a beta even when nothing changed since the last one — for a re-cut after a flaky runner, a toolchain or dependency change, or reshipping the same code. Has NO effect on a product whose version is already released: forcing overrides 'nothing changed', not 'already shipped'. Meant for a workflow_dispatch checkbox in the caller's shell."
+        type: boolean
+        default: false
 
       # ── Tests (opt-in) — gate the beta on the app's Swift tests ────────────
       run-tests:
@@ -259,6 +264,11 @@ jobs:
           DEF_HAS_QL: ${{ inputs.has-quicklook-extension }}
           DEF_APPCAST_FILENAME: ${{ inputs.appcast-filename }}
           DEF_APPCAST_SEED: ${{ inputs.appcast-seed-path }}
+          # `*` = every discovered product. Off renders to "", which products.py
+          # treats as UNSET — the `if inj:` there is load-bearing: under an
+          # `is not None` test an empty value would mean "nothing changed" and
+          # silently stop every beta on every normal push.
+          ASSUME_CHANGED: ${{ inputs.force-beta && '*' || '' }}
         run: python3 .shared-ci/.github/scripts/products.py plan-beta >> "$GITHUB_OUTPUT"
 
       - name: Show cutting set
@@ -270,7 +280,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.7
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
@@ -300,7 +310,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.7
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -344,7 +354,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.6
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.7
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}

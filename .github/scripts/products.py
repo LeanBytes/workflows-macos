@@ -17,9 +17,9 @@ Subcommands:
                  validated against that product's changelog.versions[0].
 
 Everything is pure stdlib. Git access is isolated so the logic unit-tests
-offline: set `GIT_TAGS` (space-separated) and `CHANGED_PRODUCTS` (space-separated
-ids treated as "changed since last beta") to stub git, and `BUILD_NUMBER` to
-pin the timestamp.
+offline: set `GIT_TAGS` (space-separated) and `ASSUME_CHANGED` (space-separated
+ids treated as "changed since last beta", or `*` for every product) to stub git,
+and `BUILD_NUMBER` to pin the timestamp.
 
 Env inputs:
   PRODUCTS_DIR                 product dir (default "Config/products")
@@ -28,7 +28,10 @@ Env inputs:
   DEF_DIST_STORE / DEF_DIST_APPCAST / DEF_HAS_FINDER / DEF_HAS_QL
   DEF_APPCAST_FILENAME / DEF_APPCAST_SEED
   TAG                          (plan-release) the pushed github.ref_name
-  GIT_TAGS / CHANGED_PRODUCTS / BUILD_NUMBER   test-injection overrides
+  GIT_TAGS / BUILD_NUMBER      test-injection overrides
+  ASSUME_CHANGED               ids to treat as changed since their last beta,
+                               or `*` for all. Stubs git for tests AND backs the
+                               orchestrator's force-beta input. Empty == unset.
 """
 import glob
 import json
@@ -88,16 +91,19 @@ def git_tags():
 
 def product_changed_since(key, filename, last_tag, products_dir, source_paths=()):
     """True if the product's file — or any of its declared source paths — differs
-    between last_tag and HEAD.
+    between last_tag and HEAD, OR if ASSUME_CHANGED stipulates it.
 
     Without `source-paths`, only the product file counts, so a commit that changes
     nothing but Swift still cuts no beta and the run goes green with the fix
     sitting unshipped on main. Declaring the paths a product actually builds from
     makes a code-only change cut a beta on its own.
     """
-    inj = os.environ.get("CHANGED_PRODUCTS")
-    if inj is not None:
-        return key in inj.split()
+    # Empty counts as UNSET, deliberately. The obvious workflow wiring for an
+    # off switch renders to "", and under an `is not None` test that would mean
+    # "nothing changed" — silently stopping every beta on every normal push.
+    inj = os.environ.get("ASSUME_CHANGED", "").strip()
+    if inj:
+        return inj == "*" or key in inj.split()
     paths = [os.path.join(products_dir, filename), *source_paths]
     rc = subprocess.run(["git", "diff", "--quiet", last_tag, "HEAD", "--", *paths]).returncode
     return rc != 0
@@ -259,12 +265,22 @@ def cmd_discover(products_dir, defaults):
 def cmd_plan_beta(products_dir, defaults):
     records = resolve(products_dir, defaults)
     tags = set(git_tags())
+    forced = bool(os.environ.get("ASSUME_CHANGED", "").strip())
     cutting = []
     for r in records:
         pid, v = r["id"], r["_version"]
         pfx = tag_prefix(r)                             # 'v' (primary) or '<id>-v'
         if f"{pfx}{v}" in tags:                          # released → idle → skip
-            note(f"{pid}: {pfx}{v} already released — idle (bump its changelog to cut betas)")
+            # Forcing overrides "nothing changed", never "already released" — a
+            # beta of a shipped version is nonsense. But a run that was asked to
+            # force and then quietly does nothing looks broken exactly when it is
+            # behaving correctly, so say so loudly and name the way out.
+            if forced:
+                warn(f"{pid}: force-beta was set, but {pfx}{v} is already released — no beta "
+                     f"cut. Forcing overrides 'nothing changed', not 'already shipped'. Bump "
+                     f"changelog.versions[0].version to start the next cycle.")
+            else:
+                note(f"{pid}: {pfx}{v} already released — idle (bump its changelog to cut betas)")
             continue
         betas = [t for t in tags if t.startswith(f"{pfx}{v}-beta.")]
         if betas:                                       # re-beta ONLY if this product changed
