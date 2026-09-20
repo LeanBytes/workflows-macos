@@ -29,7 +29,7 @@
 #         - '!*-v*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.6
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # … see examples/per-app/distribute-release.yml for the full list.
@@ -69,6 +69,10 @@ on:
         type: string
         default: ""
       pre-build-script:
+        type: string
+        default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
       has-finder-extension:
@@ -243,8 +247,9 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.6
     with:
+      post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.version }}
@@ -286,8 +291,9 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.6
     with:
+      post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.version }}

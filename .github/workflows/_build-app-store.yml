@@ -135,6 +135,11 @@ on:
         default: "Release"
 
       # ── Escape hatch ───────────────────────────────────────────────────────
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
+        type: string
+        default: ""
+
       extra-xcodebuild-args:
         description: "Additional xcodebuild settings appended to archive command"
         type: string
@@ -410,6 +415,29 @@ jobs:
             MARKETING_VERSION=${MARKETING_VERSION} \
             CURRENT_PROJECT_VERSION=${{ inputs.build-number }} \
             ${{ inputs.extra-xcodebuild-args }}
+
+      # ── Post-build hook (caller-provided) ──────────────────────────────────
+      # The .app inside the archive, NOT the exported artifact — export here
+      # produces a .pkg, and a caller's script should never have to branch on
+      # which channel invoked it. Running before export also fails ahead of the
+      # slow, network-bound upload steps.
+      - name: Post-build script
+        if: inputs.post-build-script != ''
+        shell: bash
+        env:
+          POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          set -euo pipefail
+          # Exactly one .app is expected; this workflow takes no product-name
+          # input, so glob rather than construct the path by name.
+          shopt -s nullglob
+          apps=(/tmp/build/app.xcarchive/Products/Applications/*.app)
+          [ "${#apps[@]}" -eq 1 ] || {
+            echo "::error::post-build: expected exactly one .app in the archive, found ${#apps[@]}"
+            exit 1
+          }
+          echo "Running post-build script on: ${apps[0]}"
+          bash "$POST_BUILD_SCRIPT" "${apps[0]}"
 
       # ── Export ─────────────────────────────────────────────────────────────
       - name: Export for App Store distribution

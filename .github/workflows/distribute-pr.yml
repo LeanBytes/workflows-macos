@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.6
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -42,6 +42,10 @@ on:
         default: ""
       pre-build-script:
         description: "Path of a bash script to run before the compile step."
+        type: string
+        default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
 
@@ -277,6 +281,34 @@ jobs:
             CODE_SIGN_IDENTITY= \
             ${{ inputs.extra-xcodebuild-args }}
 
+      # ── Post-build hook (caller-provided) ──────────────────────────────────
+      # The compile runs without -derivedDataPath, so the product is in the
+      # default DerivedData location — not predictable from here. Read it back
+      # from the same scheme/configuration/destination/args the compile used.
+      # QUOTE the result: the store leg's configuration is typically
+      # "Release Store", so BUILT_PRODUCTS_DIR contains a space, and an
+      # unquoted expansion passes on Direct and fails only on the store leg.
+      - name: Post-build script
+        if: ${{ inputs.post-build-script != '' }}
+        shell: bash
+        env:
+          POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          set -euo pipefail
+          settings=$(xcodebuild -showBuildSettings \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "generic/platform=macOS" \
+            ${{ inputs.extra-xcodebuild-args }} 2>/dev/null)
+          dir=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}')
+          name=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}')
+          [ -n "$dir" ] && [ -n "$name" ] && [ -e "$dir/$name" ] || {
+            echo "::error::could not locate the built product for scheme '$SCHEME' (configuration '$CONFIGURATION')"
+            exit 1
+          }
+          echo "Running post-build script on: $dir/$name"
+          bash "$POST_BUILD_SCRIPT" "$dir/$name"
+
   # ── Compile verify-store (App Store / TestFlight) ────────────────────────────
   # One leg per product with this channel enabled — the same subsets
   # distribute-beta matrixes its build jobs over, so the PR compiles exactly
@@ -391,13 +423,41 @@ jobs:
             CODE_SIGN_IDENTITY= \
             ${{ inputs.extra-xcodebuild-args }}
 
+      # ── Post-build hook (caller-provided) ──────────────────────────────────
+      # The compile runs without -derivedDataPath, so the product is in the
+      # default DerivedData location — not predictable from here. Read it back
+      # from the same scheme/configuration/destination/args the compile used.
+      # QUOTE the result: the store leg's configuration is typically
+      # "Release Store", so BUILT_PRODUCTS_DIR contains a space, and an
+      # unquoted expansion passes on Direct and fails only on the store leg.
+      - name: Post-build script
+        if: ${{ inputs.post-build-script != '' }}
+        shell: bash
+        env:
+          POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
+        run: |
+          set -euo pipefail
+          settings=$(xcodebuild -showBuildSettings \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -destination "generic/platform=macOS" \
+            ${{ inputs.extra-xcodebuild-args }} 2>/dev/null)
+          dir=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = /{print $2; exit}')
+          name=$(printf '%s\n' "$settings" | awk -F' = ' '/^ *FULL_PRODUCT_NAME = /{print $2; exit}')
+          [ -n "$dir" ] && [ -n "$name" ] && [ -e "$dir/$name" ] || {
+            echo "::error::could not locate the built product for scheme '$SCHEME' (configuration '$CONFIGURATION')"
+            exit 1
+          }
+          echo "Running post-build script on: $dir/$name"
+          bash "$POST_BUILD_SCRIPT" "$dir/$name"
+
   # ── Tests (opt-in) — red PR check on failure, no Jira ticket ─────────────
   # Single run against the shared core; test-scheme / app-name default to the
   # first discovered product's identity when not passed explicitly.
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.6
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
