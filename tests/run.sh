@@ -318,4 +318,41 @@ for o in direct-products store-products has-direct has-store; do
 done
 
 echo
+echo "== post-build hook: declared, invoked safely, forwarded everywhere =="
+# An app must be able to inspect what it just built. The hook takes the .app on
+# every path — never the .pkg — so a caller's script needs no per-channel
+# branch, and an input nothing forwards is unreachable (the #18 lesson).
+W="$ROOT/.github/workflows"
+for f in distribute-pr distribute-beta distribute-release distribute-alpha _build-direct _build-app-store; do
+  grep -q "^      post-build-script:" "$W/$f.yml" && pass "$f.yml declares post-build-script" \
+    || { echo "  FAIL: $f.yml has no post-build-script input"; FAIL=1; }
+done
+# Each orchestrator must hand it to every build callee it calls.
+for wf in distribute-beta distribute-release distribute-alpha; do
+  n="$(grep -c 'post-build-script: ${{ inputs.post-build-script }}' "$W/$wf.yml" || true)"
+  c="$(grep -c '_build-direct.yml@\|_build-app-store.yml@' "$W/$wf.yml" || true)"
+  [ "$n" = "$c" ] && [ "$n" != "0" ] && pass "$wf.yml forwards it to all $c build call(s)" \
+    || { echo "  FAIL: $wf.yml forwards to $n of $c build call(s) — unreachable from an app repo"; FAIL=1; }
+done
+# The space trap: a store configuration like "Release Store" puts a space in
+# BUILT_PRODUCTS_DIR, so an unquoted path passes on Direct and fails only on the
+# store leg. Every invocation must quote its argument.
+bad="$(grep -rn 'bash "\$POST_BUILD_SCRIPT" [^"]' "$W" || true)"
+[ -z "$bad" ] && pass "every invocation quotes the bundle path" \
+  || { echo "  FAIL: unquoted post-build argument — breaks on a configuration with a space:"; echo "$bad"; FAIL=1; }
+# The callees hand over the .app from the ARCHIVE, not the exported artifact:
+# _build-app-store.yml exports a .pkg, and the hook contract is a bundle.
+grep -q 'app.xcarchive/Products/Applications' "$W/_build-app-store.yml" \
+  && pass "_build-app-store.yml passes the archived .app, not the .pkg" \
+  || { echo "  FAIL: _build-app-store.yml must pass the .app inside the archive"; FAIL=1; }
+grep -q 'ARCHIVE/Products/Applications' "$ROOT/.github/scripts/build-direct.sh" \
+  && pass "build-direct.sh passes the archived .app" \
+  || { echo "  FAIL: build-direct.sh post-build must use the archived .app"; FAIL=1; }
+# One phase <-> one step: the script owns the logic, the workflow calls it.
+grep -q 'build-direct.sh post-build' "$W/_build-direct.yml" \
+  && grep -q 'post-build)       phase_post_build' "$ROOT/.github/scripts/build-direct.sh" \
+  && pass "build-direct.sh phase and _build-direct.yml step stay in lockstep" \
+  || { echo "  FAIL: post-build must be a build-direct.sh phase invoked by a matching step"; FAIL=1; }
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

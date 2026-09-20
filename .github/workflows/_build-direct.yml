@@ -125,6 +125,10 @@ on:
         description: "Path (relative to caller repo) of a bash script to run before archive. Sees the cache-restored files."
         type: string
         default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
+        type: string
+        default: ""
 
       # ── Extensions ─────────────────────────────────────────────────────────
       has-finder-extension:
@@ -251,6 +255,14 @@ jobs:
         timeout-minutes: ${{ inputs.archive-timeout-minutes }}
         shell: bash
         run: bash .shared-ci/.github/scripts/build-direct.sh archive
+
+      # One phase ↔ one step: build-direct.sh owns the logic (see phase_post_build).
+      - name: Post-build script
+        if: inputs.post-build-script != ''
+        shell: bash
+        env:
+          POST_BUILD_SCRIPT: ${{ inputs.post-build-script }}
+        run: bash .shared-ci/.github/scripts/build-direct.sh post-build
 
       - name: Export
         shell: bash

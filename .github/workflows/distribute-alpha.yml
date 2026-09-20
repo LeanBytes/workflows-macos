@@ -31,7 +31,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.6
 #       with:
 #         product-id: main          # sources identity + base from Config/products/main.json
 #       secrets:
@@ -104,6 +104,10 @@ on:
         type: string
         default: ""
       pre-build-script:
+        type: string
+        default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
       has-finder-extension:
@@ -305,8 +309,9 @@ jobs:
   build-direct:
     needs: prepare
     if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.6
     with:
+      post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"

@@ -132,7 +132,7 @@ An unset variable is `''`, which is falsy, so a repo that sets none behaves exac
 
 **Pin `prepare` / `discover` too, or nothing runs.** These are the coordination jobs, and they go first — every build, test and publish job `needs:` one of them. A repo with no self-hosted runner that pins only the build inputs still deadlocks on the very first job, and it deadlocks *silently*: a job waiting for a runner that does not exist stays `queued` and never turns red. `timeout-minutes` does not help, because that clock only starts once a job is running. The two `gate` jobs need no variable of their own — each follows the job it gates (`RUNS_ON_TEST` for `_test.yml`, the `runs-on` input for `memory-watch.yml`), so pinning that one moves both.
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.5`.
+> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.6`.
 
 ### 2a. Product files (v0.4.0)
 
@@ -194,14 +194,14 @@ Copy from [`examples/per-app/`](examples/per-app/):
 - `distribute-beta.yml`
 - `distribute-release.yml`
 
-Pin the `uses:` line to a tag (`@v0.5.5`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.5.6`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
 
 ```yaml
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.6
     secrets: inherit
     with:
       # …
@@ -269,9 +269,17 @@ It builds the **same notarized DMG/ZIP a real release would** (so it opens clean
 - **`workflow_dispatch` visibility:** the shell must live on your **default branch** for the "Run workflow" button to appear, *and* on the branch you want to build (merge or cherry-pick it onto a v3 branch that forked earlier).
 - Secrets are the **Direct subset** — Developer ID + ASC (notarization) + AWS. No Sparkle key, no App Store certs.
 
-### 5. Pre-build hooks (app-specific assets)
+### 5. Build hooks (app-specific setup and checks)
 
 For apps that need extra setup on the build runner (asset downloads, codegen, etc.), the build callee exposes generic `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the consumer repo, so no app-specific paths or URLs leak into the shared workflow.
+
+There is a matching **`post-build-script`** on every build path — `distribute-pr`, `distribute-beta`, `distribute-release`, `distribute-alpha` and both build callees. It is called with the built **`.app` bundle as `$1`**, and a non-zero exit fails the job. Use it to inspect what was produced: architecture slices, bundle contents, embedded extensions, entitlements.
+
+```yaml
+      post-build-script: scripts/check-architectures.sh
+```
+
+`$1` is always a `.app`, never a `.pkg`, so one script serves every channel. On the release paths it runs against the app **inside the archive**, right after `Archive` — that is the only artifact the Direct and App Store legs share (the store leg exports an installer), and it fails before notarization and upload rather than after. On a PR it runs after the unsigned compile, against the product in DerivedData.
 
 Example — downloading a large model file from a public URL:
 
@@ -376,10 +384,10 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.5
+uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.6
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.5`. Bump the tag in your callers when you want the change.
+Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.6`. Bump the tag in your callers when you want the change.
 
 ## Repo layout
 

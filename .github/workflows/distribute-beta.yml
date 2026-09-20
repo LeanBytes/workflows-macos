@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.5
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.6
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,6 +64,10 @@ on:
         type: string
         default: ""
       pre-build-script:
+        type: string
+        default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
       has-finder-extension:
@@ -266,7 +270,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.6
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
@@ -296,8 +300,9 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.6
     with:
+      post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ matrix.product.marketing-direct }}         # per product, e.g. "2.14.0-beta.5"
@@ -339,8 +344,9 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.5
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.6
     with:
+      post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
       version: ${{ matrix.product.marketing-store }}          # clean version (Apple rejects suffixes)

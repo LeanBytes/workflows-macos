@@ -29,6 +29,7 @@
 #   setup            resolve SwiftPM deps, or `tuist install && generate`
 #   signing          ephemeral keychain + provisioning profiles + ASC key
 #   archive          xcodebuild archive
+#   post-build       caller's POST_BUILD_SCRIPT against the archived .app (opt-in)
 #   export           xcodebuild -exportArchive (method=developer-id, manual)
 #   notarize         notarytool submit --wait (+ fetch log on rejection)
 #   staple           stapler staple
@@ -51,6 +52,8 @@
 #   USE_TUIST=true|false (default false)   CONFIGURATION (default Release)
 #   EXTRA_ARGS (extra xcodebuild settings; word-split intentionally — unquoted)
 #   PRE_BUILD_SCRIPT (bash script run in `setup`; CI also runs it as a native step)
+#   POST_BUILD_SCRIPT (bash script run in `post-build`, called with the archived
+#                     .app as $1; CI also runs it as a native step)
 #   HAS_FINDER / HAS_QUICKLOOK = true|false (+ BUNDLE_ID_FINDER / BUNDLE_ID_QUICKLOOK
 #     and PROV_PROF_DEVID_FINDER_BASE64 / PROV_PROF_DEVID_QL_BASE64)
 #   SKIP_NOTARIZE / NO_DMG / KEEP  (non-empty = on; local fast-iteration knobs.
@@ -278,6 +281,24 @@ phase_archive() {
     $EXTRA_ARGS
 }
 
+phase_post_build() {
+  # Opt-in hook so an app can inspect what it just built (architecture slices,
+  # bundle contents, entitlements). Deliberately runs against the .app inside
+  # the ARCHIVE rather than the exported one: it is the only artifact both
+  # channels share (_build-app-store.yml exports a .pkg), so a caller's script
+  # never has to branch on which channel invoked it — and it fails here, before
+  # notarization and export, which are the slow network-bound steps.
+  [ -n "${POST_BUILD_SCRIPT:-}" ] || { echo "No POST_BUILD_SCRIPT set - skipping."; return 0; }
+  banner "Post-build script"
+  local app="$ARCHIVE/Products/Applications/${PRODUCT_NAME}.app"
+  if [ ! -e "$app" ]; then
+    echo "::error::post-build: no app at $app - did the 'archive' phase run?" >&2
+    return 1
+  fi
+  echo "Running post-build script on: $app"
+  bash "$POST_BUILD_SCRIPT" "$app"
+}
+
 phase_export() {
   banner "Export"
   : "${BUNDLE_ID:?}"
@@ -489,6 +510,7 @@ case "$PHASE" in
   notarize)         phase_notarize ;;
   staple)           phase_staple ;;
   verify)           phase_verify ;;
+  post-build)       phase_post_build ;;
   package)          phase_package ;;
   verify-packages)  phase_verify_packages ;;
   cleanup)          phase_cleanup ;;
@@ -497,6 +519,7 @@ case "$PHASE" in
     phase_setup
     phase_signing
     phase_archive
+    phase_post_build
     phase_export
     if [ -z "${SKIP_NOTARIZE:-}" ]; then
       phase_notarize
