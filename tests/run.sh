@@ -276,4 +276,46 @@ for wf in distribute-beta distribute-release distribute-alpha; do
 done
 
 echo
+echo "== distribute-pr: every enabled channel compiles, unconditionally =="
+# The PR job must compile what the merge will build: one leg per channel, each
+# with that channel's scheme AND configuration. It must also compile whether or
+# not tests run — gating the build on run-tests made this an 11-second no-op for
+# every app using the `swift` test runner, whose tests never open the Xcode
+# project (#21).
+PRWF="$ROOT/.github/workflows/distribute-pr.yml"
+jobblk() { awk -v j="  $1:" '$0==j{f=1;next} f&&/^  [a-z][a-z0-9_-]*:[ ]*$/{f=0} f' "$PRWF"; }
+stepblk() { awk -v n="$1" 'index($0,"- name: "n){f=1;next} f&&/^      - name: /{f=0} f'; }
+
+# (job, subset, has-flag, scheme key, configuration input)
+chk_leg() { # 1=job 2=subset 3=has 4=scheme-key 5=config
+  local b; b="$(jobblk "$1")"
+  [ -n "$b" ] || { echo "  FAIL: distribute-pr.yml has no '$1' job — that channel never compiles"; FAIL=1; return; }
+  grep -q "needs.discover.outputs.$2" <<<"$b" && grep -q "needs.discover.outputs.$3 == 'true'" <<<"$b" \
+    && pass "$1 fans out over $2 (gated on $3)" \
+    || { echo "  FAIL: $1 must matrix over $2 and gate on $3"; FAIL=1; }
+  grep -q "matrix.product.$4" <<<"$b" && grep -q "inputs.$5" <<<"$b" \
+    && pass "$1 builds $4 with $5" \
+    || { echo "  FAIL: $1 must pair scheme '$4' with configuration '$5' — the other pairing never ships"; FAIL=1; }
+  grep -qE "^ *if:.*run-tests" <<<"$b" \
+    && { echo "  FAIL: $1 gates a step on run-tests — compiling must not depend on testing (#21)"; FAIL=1; } \
+    || pass "$1 has no run-tests gate"
+  local c; c="$(stepblk 'Compile (no signing)' <<<"$b")"
+  [ -n "$c" ] || { echo "  FAIL: $1 has no 'Compile (no signing)' step"; FAIL=1; return; }
+  grep -q "^ *if:" <<<"$c" \
+    && { echo "  FAIL: $1's Compile step is conditional — a build that can skip itself is how #21 hid"; FAIL=1; } \
+    || pass "$1's Compile step is unconditional"
+  grep -q "CODE_SIGNING_ALLOWED=NO" <<<"$c" && ! grep -q "xcodebuild archive" <<<"$c" \
+    && pass "$1 compiles unsigned, without archiving" \
+    || { echo "  FAIL: $1 must build unsigned (fork PRs get no secrets) and must not archive"; FAIL=1; }
+}
+chk_leg verify-direct direct-products has-direct scheme       configuration-direct
+chk_leg verify-store  store-products  has-store  scheme-store configuration-app-store
+
+for o in direct-products store-products has-direct has-store; do
+  grep -q "      $o: \${{ steps.d.outputs.$o }}" "$PRWF" \
+    && pass "discover forwards $o" \
+    || { echo "  FAIL: discover does not forward $o — the legs have nothing to fan out from"; FAIL=1; }
+done
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
