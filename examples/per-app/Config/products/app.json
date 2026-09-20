@@ -8,6 +8,8 @@
   "build-app-store": true,
   "distribute-app-store": true,
   "distribute-appcast": true,
+  "_comment-source-paths": "KEEP THIS. Without it a beta cuts only when this file is edited, so a code-only fix merges to main and ships nothing, green. See README section 2a.",
+  "source-paths": ["MyApp/**", "Modules/**", "Project.swift"],
   "s3-subpath": "",
   "appcast-seed-path": "Config/appcast.xml",
   "changelog": {
