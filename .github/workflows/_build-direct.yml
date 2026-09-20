@@ -114,7 +114,7 @@ on:
       # Asset downloads, codegen, etc. that an app needs ON the build runner
       # before xcodebuild archive. Keeps the shared workflow app-agnostic.
       pre-build-cache-path:
-        description: "Path to cache via actions/cache@v4 (e.g. 'MyApp/Models/asset.bin'). Empty = no cache."
+        description: "Path to cache via actions/cache@v5 (e.g. 'MyApp/Models/asset.bin'). Empty = no cache."
         type: string
         default: ""
       pre-build-cache-key:

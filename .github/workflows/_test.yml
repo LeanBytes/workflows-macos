@@ -131,7 +131,7 @@ jobs:
       - name: Look up "already tested this commit" marker
         id: marker
         if: inputs.gate-on-new-commit
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .tests-run-marker
           key: tests-run-${{ github.sha }}
@@ -253,7 +253,7 @@ jobs:
         run: echo "${{ needs.gate.outputs.sha }}" > .tests-run-marker
       - name: Save tested-commit marker
         if: steps.tests.outputs.rc == '0' || steps.tests.outputs.rc == '1'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .tests-run-marker
           key: tests-run-${{ needs.gate.outputs.sha }}
