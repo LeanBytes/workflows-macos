@@ -15,7 +15,7 @@
 #       types: [opened, synchronize]
 #   jobs:
 #     pr:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.4
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.5
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-pr
 
@@ -74,7 +74,12 @@ on:
         default: ""
 
       configuration-direct:
-        description: "Xcode build configuration to compile. Default 'Release'."
+        description: "Xcode build configuration for the Direct compile. Default 'Release'."
+        type: string
+        default: "Release"
+
+      configuration-app-store:
+        description: "Xcode build configuration for the App Store compile. Parity with distribute-beta/release — a product whose store leg needs e.g. 'Release Store' must pass it here too, or the PR compiles a flavour that never ships."
         type: string
         default: "Release"
 
@@ -128,7 +133,14 @@ jobs:
     timeout-minutes: 5
     outputs:
       products: ${{ steps.d.outputs.products }}
+      # The per-channel subsets products.py already emits — the same ones
+      # distribute-beta matrixes its build jobs over. Only `has-direct` was
+      # forwarded before, so the App Store scheme had nothing to fan out from
+      # and never compiled on a PR (#21).
+      direct-products: ${{ steps.d.outputs.direct-products }}
+      store-products: ${{ steps.d.outputs.store-products }}
       has-direct: ${{ steps.d.outputs.has-direct }}
+      has-store: ${{ steps.d.outputs.has-store }}
       ids: ${{ steps.d.outputs.ids }}
     steps:
       - name: Checkout caller repo
@@ -151,9 +163,21 @@ jobs:
       - name: Show discovered products
         run: echo "Discovered products - ${{ steps.d.outputs.ids }}"
 
-  # ── Compile every product (fan-out) — no signing, fast "does it build?" ──
-  verify:
+  # ── Compile verify-direct (Developer ID / Sparkle) ────────────────────────────
+  # One leg per product with this channel enabled — the same subsets
+  # distribute-beta matrixes its build jobs over, so the PR compiles exactly
+  # what the merge will build. products.py validates `scheme` as required
+  # for this channel, so the scheme is always present.
+  #
+  # NOTHING here is conditional. Gating the build on `run-tests` is what made
+  # this job an 11-second no-op for every app using the `swift` test runner,
+  # whose tests never open the Xcode project (#21). This job and `test` both
+  # need only `discover`, so they run in parallel — a duplicate build costs
+  # machine minutes, never PR latency.
+  verify-direct:
+    name: verify-direct / ${{ matrix.product.id }}
     needs: discover
+    if: needs.discover.outputs.has-direct == 'true'
     # `vars.RUNS_ON_BUILD` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
     runs-on: ${{ vars.RUNS_ON_BUILD || fromJSON(inputs.runs-on-build) }}
@@ -161,12 +185,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        product: ${{ fromJSON(needs.discover.outputs.products) }}
+        product: ${{ fromJSON(needs.discover.outputs.direct-products) }}
     env:
-      # A product's Direct scheme is preferred; an App-Store-only product falls
-      # back to its scheme-store. (Missing keys render as "" in env assignment.)
-      RAW_SCHEME: ${{ matrix.product.scheme }}
-      RAW_SCHEME_STORE: ${{ matrix.product.scheme-store }}
+      SCHEME: ${{ matrix.product.scheme }}
+      CONFIGURATION: ${{ inputs.configuration-direct }}
       PRODUCT_ID: ${{ matrix.product.id }}
     steps:
       - name: Checkout
@@ -176,22 +198,13 @@ jobs:
           submodules: true
           lfs: ${{ inputs.lfs }}
 
-      - name: Resolve scheme
+      - name: Show what is being compiled
         shell: bash
-        run: |
-          set -euo pipefail
-          S="${RAW_SCHEME:-}"
-          [ -z "$S" ] && S="${RAW_SCHEME_STORE:-}"
-          if [ -z "$S" ]; then
-            echo "::error::product '${PRODUCT_ID:-?}' has neither 'scheme' nor 'scheme-store' — cannot compile."
-            exit 1
-          fi
-          echo "SCHEME=$S" >> "$GITHUB_ENV"
-          echo "Compiling product '${PRODUCT_ID}' with scheme: $S"
+        run: echo "product '$PRODUCT_ID' - scheme '$SCHEME' - configuration '$CONFIGURATION'"
 
       # ── Tuist (opt-in) ─────────────────────────────────────────────────────
       - name: Install Tuist (via mise)
-        if: ${{ inputs.use-tuist && !inputs.run-tests }}
+        if: ${{ inputs.use-tuist }}
         shell: bash
         run: |
           set -euo pipefail
@@ -208,52 +221,170 @@ jobs:
           mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
 
       - name: Fetch Swift package dependencies (Tuist)
-        if: ${{ inputs.use-tuist && !inputs.run-tests }}
+        if: ${{ inputs.use-tuist }}
         shell: bash
         run: mise exec -- tuist install
 
       - name: Generate Xcode project (Tuist)
-        if: ${{ inputs.use-tuist && !inputs.run-tests }}
+        if: ${{ inputs.use-tuist }}
         shell: bash
         run: mise exec -- tuist generate --no-open
 
       # ── SwiftPM (when not Tuist) ───────────────────────────────────────────
       - name: Resolve Swift package dependencies
-        if: ${{ !inputs.use-tuist && !inputs.run-tests }}
+        if: ${{ !inputs.use-tuist }}
         shell: bash
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
             -scheme "$SCHEME" \
-            -configuration "${{ inputs.configuration-direct }}"
+            -configuration "$CONFIGURATION"
 
       # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      # Run unconditionally: a pre-build script may generate sources the compile
+      # needs. Generic beats optimal — an app whose hook only feeds the tests
+      # pays a few seconds here.
       - name: Pre-build cache
-        if: ${{ inputs.pre-build-cache-path != '' && !inputs.run-tests }}
+        if: ${{ inputs.pre-build-cache-path != '' }}
         uses: actions/cache@v5
         with:
           path: ${{ inputs.pre-build-cache-path }}
           key: ${{ inputs.pre-build-cache-key }}
 
       - name: Pre-build script
-        if: ${{ inputs.pre-build-script != '' && !inputs.run-tests }}
+        if: ${{ inputs.pre-build-script != '' }}
         shell: bash
         run: bash "${{ inputs.pre-build-script }}"
 
       # ── Compile (no signing) ───────────────────────────────────────────────
-      # CODE_SIGNING_ALLOWED=NO + CODE_SIGNING_REQUIRED=NO let xcodebuild
-      # compile without selecting an identity / provisioning profile.
-      # Fork PRs (where GitHub strips secrets) and same-repo PRs alike get
-      # the same fast "does this build?" signal. Skipped when run-tests: the
-      # `test` job builds the app as part of running the tests.
+      # CODE_SIGNING_ALLOWED=NO + CODE_SIGNING_REQUIRED=NO let xcodebuild compile
+      # without selecting an identity or provisioning profile, so fork PRs (where
+      # GitHub strips secrets) get the same signal as same-repo ones. `build` and
+      # not `archive`: building the app scheme already compiles every embedded
+      # extension and links the whole bundle, which is the question a PR asks;
+      # archiving adds export + packaging, needs secrets a fork cannot have, and
+      # buys no extra compile coverage.
       - name: Compile (no signing)
-        if: ${{ !inputs.run-tests }}
         shell: bash
         run: |
           set -euo pipefail
           xcodebuild build \
             -scheme "$SCHEME" \
-            -configuration "${{ inputs.configuration-direct }}" \
+            -configuration "$CONFIGURATION" \
+            -destination "generic/platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            ${{ inputs.extra-xcodebuild-args }}
+
+  # ── Compile verify-store (App Store / TestFlight) ────────────────────────────
+  # One leg per product with this channel enabled — the same subsets
+  # distribute-beta matrixes its build jobs over, so the PR compiles exactly
+  # what the merge will build. products.py validates `scheme-store` as required
+  # for this channel, so the scheme is always present.
+  #
+  # NOTHING here is conditional. Gating the build on `run-tests` is what made
+  # this job an 11-second no-op for every app using the `swift` test runner,
+  # whose tests never open the Xcode project (#21). This job and `test` both
+  # need only `discover`, so they run in parallel — a duplicate build costs
+  # machine minutes, never PR latency.
+  verify-store:
+    name: verify-store / ${{ matrix.product.id }}
+    needs: discover
+    if: needs.discover.outputs.has-store == 'true'
+    # `vars.RUNS_ON_BUILD` overrides this with no commit — see README, "Moving a job
+    # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
+    runs-on: ${{ vars.RUNS_ON_BUILD || fromJSON(inputs.runs-on-build) }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        product: ${{ fromJSON(needs.discover.outputs.store-products) }}
+    env:
+      SCHEME: ${{ matrix.product.scheme-store }}
+      CONFIGURATION: ${{ inputs.configuration-app-store }}
+      PRODUCT_ID: ${{ matrix.product.id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: true
+          lfs: ${{ inputs.lfs }}
+
+      - name: Show what is being compiled
+        shell: bash
+        run: echo "product '$PRODUCT_ID' - scheme '$SCHEME' - configuration '$CONFIGURATION'"
+
+      # ── Tuist (opt-in) ─────────────────────────────────────────────────────
+      - name: Install Tuist (via mise)
+        if: ${{ inputs.use-tuist }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The `brew tap tuist/tuist` cask is broken upstream (invalid
+          # `conflicts_with formula:` stanza), so Tuist is installed through mise,
+          # via its official one-liner (the method used on the self-hosted runner).
+          # mise lands in ~/.local/bin — add it to PATH now and to $GITHUB_PATH so
+          # the Fetch/Generate steps below find it. A committed mise.toml pin is
+          # honored, else latest. CI sets CI=true so mise auto-trusts the config.
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v mise >/dev/null 2>&1 || curl https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          mise install
+          mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
+
+      - name: Fetch Swift package dependencies (Tuist)
+        if: ${{ inputs.use-tuist }}
+        shell: bash
+        run: mise exec -- tuist install
+
+      - name: Generate Xcode project (Tuist)
+        if: ${{ inputs.use-tuist }}
+        shell: bash
+        run: mise exec -- tuist generate --no-open
+
+      # ── SwiftPM (when not Tuist) ───────────────────────────────────────────
+      - name: Resolve Swift package dependencies
+        if: ${{ !inputs.use-tuist }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -resolvePackageDependencies \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION"
+
+      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      # Run unconditionally: a pre-build script may generate sources the compile
+      # needs. Generic beats optimal — an app whose hook only feeds the tests
+      # pays a few seconds here.
+      - name: Pre-build cache
+        if: ${{ inputs.pre-build-cache-path != '' }}
+        uses: actions/cache@v5
+        with:
+          path: ${{ inputs.pre-build-cache-path }}
+          key: ${{ inputs.pre-build-cache-key }}
+
+      - name: Pre-build script
+        if: ${{ inputs.pre-build-script != '' }}
+        shell: bash
+        run: bash "${{ inputs.pre-build-script }}"
+
+      # ── Compile (no signing) ───────────────────────────────────────────────
+      # CODE_SIGNING_ALLOWED=NO + CODE_SIGNING_REQUIRED=NO let xcodebuild compile
+      # without selecting an identity or provisioning profile, so fork PRs (where
+      # GitHub strips secrets) get the same signal as same-repo ones. `build` and
+      # not `archive`: building the app scheme already compiles every embedded
+      # extension and links the whole bundle, which is the question a PR asks;
+      # archiving adds export + packaging, needs secrets a fork cannot have, and
+      # buys no extra compile coverage.
+      - name: Compile (no signing)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
             -destination "generic/platform=macOS" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -266,7 +397,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: discover
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.4
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.5
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
