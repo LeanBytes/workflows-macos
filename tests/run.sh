@@ -439,4 +439,43 @@ n=$(grep -c "xcodebuild -showBuildSettings failed for scheme" "$PRWF" || true)
 rm -f "$BIG"
 
 echo
+echo "== actions: nothing left on the deprecated Node 20 runtime =="
+# GitHub is forcing Node 20 actions onto Node 24 and will stop doing so. The
+# cache SUB-actions lagged at v4 (node20) while actions/cache itself was already
+# v5 (node24) in the same files — mixed majors, and only the sub-actions warned.
+# A minimum per action, not an exact pin, so this does not go stale on every
+# upstream release; an UNKNOWN action fails too, forcing a deliberate choice.
+python3 - "$ROOT" <<'PYCHK' || FAIL=1
+import glob, os, re, sys
+MIN = {            # first major running on node24
+    "actions/checkout": 6,
+    "actions/cache": 5,
+    "actions/cache/restore": 5,
+    "actions/cache/save": 5,
+    "actions/upload-artifact": 7,
+    "actions/download-artifact": 8,
+}
+bad = []
+seen = set()
+for f in sorted(glob.glob(os.path.join(sys.argv[1], ".github/workflows/*.yml"))):
+    for n, line in enumerate(open(f), 1):
+        m = re.search(r"uses:\s*(actions/[\w./-]+)@v(\d+)", line)
+        if not m:
+            continue
+        name, major = m.group(1), int(m.group(2))
+        seen.add(name)
+        where = f"{os.path.basename(f)}:{n}"
+        if name not in MIN:
+            bad.append(f"{where}  {name}@v{major} is not in the known-good table — "
+                       f"check its runtime and add a minimum")
+        elif major < MIN[name]:
+            bad.append(f"{where}  {name}@v{major} runs on node20; needs >= v{MIN[name]}")
+for b in bad:
+    print(f"  FAIL: {b}")
+if not bad:
+    print(f"  ok  : all {len(seen)} distinct actions are on a node24 major")
+sys.exit(1 if bad else 0)
+PYCHK
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

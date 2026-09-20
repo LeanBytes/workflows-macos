@@ -25,7 +25,7 @@
 #       branches: [main]
 #   jobs:
 #     beta:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.8
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-beta.yml@v0.5.9
 #       secrets:
 #         # …
 # ─────────────────────────────────────────────────────────────────────────────
@@ -280,7 +280,7 @@ jobs:
   test:
     if: inputs.run-tests
     needs: prepare
-    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.8
+    uses: LeanBytes/workflows-macos/.github/workflows/_test.yml@v0.5.9
     with:
       test-runner: ${{ inputs.test-runner }}
       runs-on: ${{ inputs.runs-on-test }}
@@ -310,7 +310,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.8
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.9
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -354,7 +354,7 @@ jobs:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.8
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.9
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}

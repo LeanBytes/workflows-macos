@@ -150,7 +150,7 @@ jobs:
       - name: Look up "already watched this commit" marker
         id: marker
         if: inputs.gate-on-new-commit
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .memory-watch-marker
           key: memory-watch-tested-${{ github.sha }}
@@ -364,7 +364,7 @@ jobs:
         run: echo "${{ needs.gate.outputs.sha }}" > .memory-watch-marker
       - name: Save watched-commit marker
         if: steps.watch.outputs.watch_exit == '0' || steps.watch.outputs.watch_exit == '2'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .memory-watch-marker
           key: memory-watch-tested-${{ needs.gate.outputs.sha }}
