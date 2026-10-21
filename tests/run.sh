@@ -743,4 +743,19 @@ sys.exit(1 if bad else 0)
 PYREF
 
 echo
+echo "== MIGRATING.md: every retired product-file key names its replacement =="
+python3 - "$PY" "$ROOT/MIGRATING.md" <<'PYMIG' || FAIL=1
+import re, sys
+block = re.search(r"^RETIRED = \{(.*?)^\}", open(sys.argv[1]).read(), re.M | re.S).group(1)
+keys = re.findall(r'^\s*"([a-z0-9-]+)":', block, re.M)
+doc = open(sys.argv[2]).read()
+missing = [k for k in keys if f"`{k}`" not in doc]
+for k in missing:
+    print(f"  FAIL: retired key '{k}' is missing from MIGRATING.md")
+if keys and not missing:
+    print(f"  ok  : all {len(keys)} retired keys are in MIGRATING.md")
+sys.exit(1 if missing or not keys else 0)
+PYMIG
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

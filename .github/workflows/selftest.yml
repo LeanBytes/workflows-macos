@@ -13,12 +13,14 @@ on:
       - '.github/**'
       - 'examples/**'
       - 'tests/**'
+      - 'MIGRATING.md'
   push:
     branches: [main]
     paths:
       - '.github/**'
       - 'examples/**'
       - 'tests/**'
+      - 'MIGRATING.md'
 
 permissions:
   contents: read

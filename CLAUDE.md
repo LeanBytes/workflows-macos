@@ -8,7 +8,7 @@ The **canonical shared CI/CD workflows for every LeanBytes and sarensw Apple app
 
 **v0.6.0 folded `LeanBytes/workflows-ios` back in** (issue #32). workflows-ios was a fork cut down to iOS; it gets only blocking fixes until its last app has moved, then it is archived. The last step of that plan renames this repo to **`workflows-apple`** (v1.0.0). New work lands here, never in workflows-ios.
 
-Layout: `.github/workflows/_build-{ios,mac-store,mac-direct}.yml` are the internal callees (named by platform); `distribute-pr.yml`, `distribute.yml`, `distribute-release.yml`, `distribute-alpha.yml` are the orchestrators; `_test.yml` and `memory-watch.yml` are standalone reusables; `.github/scripts/` holds `products.py` (the planning brain), `profiles.py` (profiles from App Store Connect) and helpers; each app repo carries one `Config/products/<id>.json` per product; `examples/per-app/` has the shell templates; `tests/` holds the offline suite.
+Layout: `.github/workflows/_build-{ios,mac-store,mac-direct}.yml` are the internal callees (named by platform); `distribute-pr.yml`, `distribute.yml`, `distribute-release.yml`, `distribute-alpha.yml` are the orchestrators; `_test.yml` and `memory-watch.yml` are standalone reusables; `.github/scripts/` holds `products.py` (the planning brain), `profiles.py` (profiles from App Store Connect) and helpers; each app repo carries one `Config/products/<id>.json` per product; `examples/per-app/` has the shell templates; `MIGRATING.md` takes an app from any earlier line to the current one; `tests/` holds the offline suite.
 
 ## The apps
 
@@ -113,6 +113,7 @@ Vars: `S3_DISTRIBUTION_PATH`, `S3_DOWNLOAD_URL`, the `RUNS_ON_*` overrides (`RUN
 
 ## Editing patterns
 
+- **A breaking change updates `MIGRATING.md` in the same PR**: the key, input, secret or variable, what replaces it, and what an app has to do. `tests/run.sh` fails when a retired product-file key is missing from it.
 - **All workflow logic lives here; per-app shells only declare triggers, inputs and the explicit secrets block.** Never `secrets: inherit` in the examples (same-org only, and it passes every secret).
 - **`tests/run.sh` must stay green** (`bash tests/run.sh`, ~10 s, needs python3, git, openssl, yq). Add a case for every behaviour change in `products.py` or `profiles.py`. It also checks the wiring of every `uses:` call against the callee's declared inputs and secrets (actionlint can't see across `uses:`), so a renamed input fails here instead of in an app repo. Lint with `actionlint -ignore 'property "workflow_sha" is not defined in object type \{check_run_id' -ignore 'shellcheck reported issue' .github/workflows/*.yml`.
 - **When bumping the tag, bump every `@vX.Y.Z` inside the shared workflows AND in `examples/per-app/`** in the same commit.

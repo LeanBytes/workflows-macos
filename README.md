@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for Apple app distribution: **iPhone and iPad*
 
 Adding a new app means: dropping one `Config/products/<id>.json` per product in your repo, setting the team's secrets once (certificates + one App Store Connect key) plus two S3 vars, creating one provisioning profile per bundle ID in the developer portal, and copying four **trigger-only** shell workflows into `.github/workflows/` (they *discover* your products — no `products` input). No build/sign/notarize/upload code lives in the consumer repo, and no provisioning profile is ever stored in GitHub.
 
-> **v0.6.0 (breaking):** iOS joined (it used to live in `LeanBytes/workflows-ios`), the product file names its platforms, profiles come from App Store Connect, `distribute-beta.yml` became `distribute.yml`, and App Store builds no longer get tags. See [Migrating from v0.5 or workflows-ios](#migrating-from-v05-or-workflows-ios). Pin v0.6.1, not v0.6.0: until v0.6.1 (and v0.5.10), every tag checked out main's shared scripts instead of its own (#34).
+> **v0.6.0 (breaking):** iOS joined (it used to live in `LeanBytes/workflows-ios`), the product file names its platforms, profiles come from App Store Connect, `distribute-beta.yml` became `distribute.yml`, and App Store builds no longer get tags. See [MIGRATING.md](MIGRATING.md) for every path from v0.3, v0.4, v0.5 and workflows-ios. Pin v0.6.1, not v0.6.0: until v0.6.1 (and v0.5.10), every tag checked out main's shared scripts instead of its own (#34).
 
 ## Architecture
 
@@ -295,18 +295,16 @@ fi
 
 The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty.
 
-## Migrating from v0.5 or workflows-ios
+## Migrating
 
-1. **Product files:** move each channel into `platforms`. The validator names every retired key and what replaces it; run `PRODUCTS_DIR=Config/products python3 <workflows-macos>/.github/scripts/products.py discover` locally to see them all at once. Typical moves:
-   - `build-direct` / `build-app-store` / `distribute-app-store` → `"platforms": {"macos": {"direct": {}, "app-store": {}}}`; `"distribute": false` on a leg that built without uploading.
-   - `scheme-store` / `bundle-id-store` → `scheme` / `bundle-id` on the app-store leg.
-   - `distribute-appcast`, `s3-subpath`, `appcast-*`, `changelog-filename` → onto the direct leg (`appcast` for the first).
-   - `has-finder`, `has-quicklook`, the extension bundle IDs and every `*-profile-secret` → delete them.
-   - workflows-ios `channel` → `"platforms": {"ios": {"app-store": {}}}` or `{"ad-hoc": {}}`.
-2. **Shells:** replace them with the four in `examples/per-app/`. `distribute-beta.yml` is now `distribute.yml` (the manual input is `force`, not `force-beta`, and its `permissions` add `actions: read`); the build runner inputs are `runs-on-build-ios`, `runs-on-build-mac-store`, `runs-on-build-mac-direct`; the channel-default inputs and `configuration-*` are gone (the product file holds them); an iPhone app's `extra-xcodebuild-args` signing workaround is no longer needed.
-3. **Secrets:** make sure the App Store Connect key is an **Admin** key, then delete every `PROV_PROF_*` secret after the first green run. An Ad Hoc app that never uploaded to App Store Connect now needs the key too.
-4. **Variables:** `RUNS_ON_BUILD_STORE` / `RUNS_ON_BUILD_DIRECT` are now `RUNS_ON_BUILD_MAC_STORE` / `RUNS_ON_BUILD_MAC_DIRECT`; the old names are no longer read.
-5. **First push:** a Direct product continues its `-beta.N` count. A product without a Direct leg builds on the first push that changes its product file — the migration commit itself.
+[MIGRATING.md](MIGRATING.md) takes an app to v0.6.1 from v0.5.x, v0.4.x, v0.3.x or `LeanBytes/workflows-ios`. It covers:
+
+- every retired product-file key and shell input, with its replacement
+- before and after files for a Direct + App Store app with extensions
+- which secrets to delete and which the App Store Connect key now needs
+- the renamed runner inputs and variables
+- how an App Store build now reaches review
+- a one-line fix for apps still pinned to v0.5.9 or older
 
 ## Local builds (no CI)
 
@@ -391,7 +389,7 @@ Pin caller `uses:` to a tag, not `@main`:
 uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.1
 ```
 
-Patch versions are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.6.0` is a breaking change** (see [Migrating](#migrating-from-v05-or-workflows-ios)); so was `v0.4.0`, which moved product identity + changelog into `Config/products/<id>.json`.
+Patch versions are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.6.0` is a breaking change** (see [Migrating](MIGRATING.md)); so was `v0.4.0`, which moved product identity + changelog into `Config/products/<id>.json`.
 
 ## Repo layout
 
