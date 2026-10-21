@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.0
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.1
     # The same list as distribute.yml, minus Sparkle and Jira.
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}

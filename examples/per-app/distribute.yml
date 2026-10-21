@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   distribute:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.0
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.1
     # `secrets: inherit` only works same-org; the explicit list works universally.
     # One list for every app: a secret a leg doesn't use is simply never read.
     # No provisioning profiles — the App Store Connect key downloads them.

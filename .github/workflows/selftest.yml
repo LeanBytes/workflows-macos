@@ -3,9 +3,9 @@ name: selftest
 # CI for workflows-macos itself (the repo has no other self-CI): lint every
 # workflow and run the offline suite (products.py, profiles.py, the wiring of
 # every workflow call, examples included) whenever .github/**, examples/** or
-# tests/** change. The `job_workflow_sha` context and shellcheck style findings are
-# ignored (the former is an actionlint gap; the latter are the intentional
-# "read all TSV columns, use a subset" publish loops).
+# tests/** change. `job.workflow_sha` and shellcheck style findings are ignored:
+# GitHub added the former on 2026-04-23, after actionlint 1.7.12; the latter are
+# the intentional "read all TSV columns, use a subset" publish loops.
 
 on:
   pull_request:
@@ -48,7 +48,7 @@ jobs:
       - name: Lint workflows
         run: |
           "$RUNNER_TEMP/actionlint/actionlint" \
-            -ignore 'property "job_workflow_sha" is not defined' \
+            -ignore 'property "workflow_sha" is not defined in object type \{check_run_id' \
             -ignore 'shellcheck reported issue' \
             .github/workflows/*.yml
 

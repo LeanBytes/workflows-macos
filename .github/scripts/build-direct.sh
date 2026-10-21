@@ -6,7 +6,7 @@
 #
 # SINGLE SOURCE OF TRUTH for the Direct build. Two callers:
 #   • CI — `_build-mac-direct.yml` checks this repo out into `.shared-ci/` (at the
-#     same commit, via github.job_workflow_sha) and runs ONE phase per named
+#     same commit, via job.workflow_sha) and runs ONE phase per named
 #     workflow step, so the GitHub Actions UI keeps its per-step names,
 #     timings, and pass/fail icons:
 #         bash .shared-ci/.github/scripts/build-direct.sh archive

@@ -6,7 +6,7 @@ Reusable GitHub Actions workflows for Apple app distribution: **iPhone and iPad*
 
 Adding a new app means: dropping one `Config/products/<id>.json` per product in your repo, setting the team's secrets once (certificates + one App Store Connect key) plus two S3 vars, creating one provisioning profile per bundle ID in the developer portal, and copying four **trigger-only** shell workflows into `.github/workflows/` (they *discover* your products — no `products` input). No build/sign/notarize/upload code lives in the consumer repo, and no provisioning profile is ever stored in GitHub.
 
-> **v0.6.0 (breaking):** iOS joined (it used to live in `LeanBytes/workflows-ios`), the product file names its platforms, profiles come from App Store Connect, `distribute-beta.yml` became `distribute.yml`, and App Store builds no longer get tags. See [Migrating from v0.5 or workflows-ios](#migrating-from-v05-or-workflows-ios).
+> **v0.6.0 (breaking):** iOS joined (it used to live in `LeanBytes/workflows-ios`), the product file names its platforms, profiles come from App Store Connect, `distribute-beta.yml` became `distribute.yml`, and App Store builds no longer get tags. See [Migrating from v0.5 or workflows-ios](#migrating-from-v05-or-workflows-ios). Pin v0.6.1, not v0.6.0: until v0.6.1 (and v0.5.10), every tag checked out main's shared scripts instead of its own (#34).
 
 ## Architecture
 
@@ -231,7 +231,7 @@ Copy from [`examples/per-app/`](examples/per-app/) — the same files serve ever
 - `distribute-release.yml` — your version tag.
 - `distribute-alpha.yml` — by hand, from any branch.
 
-Pin the `uses:` line to a tag (`@v0.6.0`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.6.1`), not `@main`. Uncomment per-app inputs as needed.
 
 **On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*, and it hands the shared workflow every secret the repo can see. The example shells list each secret explicitly, which works in every configuration and passes only what is used. Keep that block as-is.
 
@@ -388,7 +388,7 @@ Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/f
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.0
+uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.1
 ```
 
 Patch versions are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.6.0` is a breaking change** (see [Migrating](#migrating-from-v05-or-workflows-ios)); so was `v0.4.0`, which moved product identity + changelog into `Config/products/<id>.json`.

@@ -717,4 +717,30 @@ sys.exit(1 if bad else 0)
 PYCHK
 
 echo
+echo "== shared scripts: checked out at the called workflow's own commit =="
+# `github.job_workflow_sha` does not exist: it came out empty, actions/checkout
+# took the default branch, and every pinned caller ran main's scripts (#34).
+python3 - "$ROOT/.github/workflows" <<'PYREF' || FAIL=1
+import glob, os, re, sys
+WANT = "${{ job.workflow_sha || 'job.workflow_sha-is-empty' }}"
+bad, n = [], 0
+for f in sorted(glob.glob(os.path.join(sys.argv[1], "*.yml"))):
+    for step in re.split(r"\n(?=\s*- )", open(f).read()):
+        if "repository: LeanBytes/workflows-macos" not in step:
+            continue
+        n += 1
+        m = re.search(r"^\s*ref:\s*(.+?)\s*$", step, re.M)
+        if not m or m.group(1) != WANT:
+            bad.append(f"{os.path.basename(f)}: shared scripts checked out at "
+                       f"{m.group(1) if m else 'no ref, i.e. the default branch'}")
+if not n:
+    bad.append("no shared-script checkout found")
+for b in bad:
+    print(f"  FAIL: {b}")
+if not bad:
+    print(f"  ok  : all {n} shared-script checkouts use the called workflow's own commit and fail when it is empty")
+sys.exit(1 if bad else 0)
+PYREF
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }
