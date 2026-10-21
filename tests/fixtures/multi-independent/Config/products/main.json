@@ -1,15 +1,14 @@
 {
   "id": "main",
-  "platform": "macos",
   "scheme": "MainApp",
   "product-name": "MainApp",
   "bundle-id": "com.example.mainapp",
-  "scheme-store": "MainApp",
-  "build-direct": true,
-  "build-app-store": true,
-  "distribute-app-store": true,
-  "distribute-appcast": true,
-  "s3-subpath": "",
+  "platforms": {
+    "macos": {
+      "direct": { "appcast": true },
+      "app-store": {}
+    }
+  },
   "changelog": {
     "comingNext": { "en": "next up" },
     "versions": [

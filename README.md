@@ -1,34 +1,47 @@
 # workflows-macos
 
-Reusable GitHub Actions workflows for macOS app distribution — Developer ID Direct (Sparkle) + App Store (TestFlight / App Store Connect). Drop them into any macOS app repo that ships either or both channels.
+Reusable GitHub Actions workflows for Apple app distribution: **iPhone and iPad** (App Store via TestFlight, and Ad Hoc for registered devices) and **Mac** (Developer ID Direct with Sparkle, and the Mac App Store via TestFlight). Drop them into any app repo that ships one or more of those channels.
 
-> **Heads up — strongly opinionated.** These workflows are tailored to how Stephan Arenswald (personal) and **LeanBytes** ship macOS apps. They power **MacPacker**, **FlowMoose**, and **FileFillet** in production. The choices baked in — Developer ID + App Store driven from a single repo, Sparkle 2 with stable + beta channels, AWS S3 for direct-download hosting in `eu-central-1`, timestamp-based build numbers, one self-contained `Config/products/<id>.json` per product (build identity + inline changelog) as the source of truth — reflect that specific use case. If your distribution model is different, expect to patch rather than just configure.
+> **Heads up — strongly opinionated.** These workflows are tailored to how Stephan Arenswald (personal) and **LeanBytes** ship apps. They power **MacPacker**, **FlowMoose**, **FileFillet** and the LeanBytes iPhone apps in production. The choices baked in — Developer ID + App Store driven from a single repo, Sparkle 2 with stable + beta channels, AWS S3 for direct-download hosting in `eu-central-1`, timestamp-based build numbers, provisioning profiles fetched from App Store Connect at build time, one self-contained `Config/products/<id>.json` per product (build identity + inline changelog) as the source of truth — reflect that specific use case. If your distribution model is different, expect to patch rather than just configure.
 
-Adding a new app means: dropping one `Config/products/<id>.json` per product (build identity + inline changelog) in your repo, setting ~9 secrets + two S3 vars, and copying three **trigger-only** shell workflows into `.github/workflows/` (they *discover* your products — no `products` input). No build/sign/notarize/upload code lives in the consumer repo.
+Adding a new app means: dropping one `Config/products/<id>.json` per product in your repo, setting the team's secrets once (certificates + one App Store Connect key) plus two S3 vars, creating one provisioning profile per bundle ID in the developer portal, and copying four **trigger-only** shell workflows into `.github/workflows/` (they *discover* your products — no `products` input). No build/sign/notarize/upload code lives in the consumer repo, and no provisioning profile is ever stored in GitHub.
+
+> **v0.6.0 (breaking):** iOS joined (it used to live in `LeanBytes/workflows-ios`), the product file names its platforms, profiles come from App Store Connect, `distribute-beta.yml` became `distribute.yml`, and App Store builds no longer get tags. See [Migrating from v0.5 or workflows-ios](#migrating-from-v05-or-workflows-ios).
 
 ## Architecture
 
 ```
-Per-app shell (trigger-only)          Shared orchestrator                            Shared callees
-────────────────────────────         ────────────────────────────────              ──────────────────────────
-distribute-pr.yml           ──→   distribute-pr.yml                          ┐
-  on: pull_request                   discover → verify (compile each product) │
-                                                                              │
-distribute-beta.yml         ──→   distribute-beta.yml                         │   _build-direct.yml
-  on: push branches:[main]           prepare (plan-beta: changelog-driven  ───┼──→  (direct-build-<id>)
-                                     cutting set) → build-* (matrix) →         │
-                                     publish (per product: <id>-v<ver>-beta.N  │   _build-app-store.yml
-distribute-release.yml      ──→      tag + pre-release)                        ┘    (app-store-build-<id>)
-  on: push tags '<id>-v*'          distribute-release.yml
-       (excl. -beta / -alpha)        prepare (plan-release: parse tag →
-                                     scoped product) → build-* → publish-release
+Per-app shell (trigger-only)      Shared orchestrator                          Shared build callees
+────────────────────────────      ──────────────────────────────────           ───────────────────────────
+distribute-pr.yml          ──→   distribute-pr.yml                             (none — unsigned compile
+  on: pull_request                  discover → compile every leg                 of every leg, inline)
+
+distribute.yml             ──→   distribute.yml                          ┐
+  on: push branches:[main]          prepare (plan) → build-* (matrix,     │    _build-ios.yml
+  + manual "force"                  one job per callee) → publish         ├──→   .ipa (App Store, Ad Hoc)
+                                                                          │
+distribute-release.yml     ──→   distribute-release.yml                  │    _build-mac-store.yml
+  on: push tags v* / <id>-v*        prepare (plan-release) → Direct leg   ├──→   .pkg (Mac App Store)
+                                    → publish-release                     │
+distribute-alpha.yml       ──→   distribute-alpha.yml                    │    _build-mac-direct.yml
+  on: workflow_dispatch             prepare (plan-alpha) → every leg      ┘      notarized DMG + ZIP
+                                    → publish-alpha (private)
 ```
 
-The build callees produce **artifacts** (DMG/ZIP for Direct, `.pkg` for App Store). Orchestrators decide the publishing sequence so failure mid-channel doesn't half-publish.
+A product names its **platforms** and the **channels** each ships through; `products.py` turns that into one **leg** per platform and channel. Each leg is built by the callee for its platform, which produces an **artifact**; the orchestrator's publish job decides the sequence, so a failure mid-way never half-publishes.
+
+| Platform | Channel | Built by | Lands in |
+|---|---|---|---|
+| `ios` (iPhone, iPad) | `app-store` | `_build-ios.yml` | TestFlight → you submit it in App Store Connect |
+| `ios` | `ad-hoc` | `_build-ios.yml` | IPA + manifest on S3, installed via `itms-services://` on registered devices |
+| `macos` | `app-store` | `_build-mac-store.yml` | TestFlight → you submit it in App Store Connect |
+| `macos` | `direct` | `_build-mac-direct.yml` | Notarized DMG/ZIP on S3, the Sparkle feed, a GitHub (pre-)release |
+
+`tvos` and `visionos` are designed in (App Store only) and get switched on when the first app ships there; a product file naming them fails with "not supported yet".
 
 ## How versioning works (per-product, self-contained)
 
-Each product is one **`Config/products/<id>.json`** in your app repo — its build identity plus an inline **`changelog`** object that is the source of truth for **that product's** next-to-ship version + release notes. The `changelog` value uses the schema shown below (identical to the old top-level `Config/Changelog.json`); your app loads it at runtime for its What's New view, and CI reads the same object for the appcast/Release notes — one author, one place, per product.
+Each product is one **`Config/products/<id>.json`** in your app repo — its build identity plus an inline **`changelog`** object that is the source of truth for **that product's** next-to-ship version + release notes. The `changelog` value uses the schema below; your app loads it at runtime for its What's New view, and CI reads the same object for the appcast/Release notes — one author, one place, per product.
 
 ```jsonc
 {
@@ -52,66 +65,125 @@ Each product is one **`Config/products/<id>.json`** in your app repo — its bui
 }
 ```
 
-`comingNext` and each `item.title` are **locale-keyed maps** (`{"en": "...", "de": "..."}`). The shared workflows currently render the `en` value into the appcast description and GH Release body; the other locales are picked up by your app's in-product What's New view directly from the same file. `comingNext` is for the app UI only — it does not appear in the appcast or GH Release notes.
+`comingNext` and each `item.title` are **locale-keyed maps** (`{"en": "...", "de": "..."}`). The shared workflows render the `en` value into the appcast description and GH Release body; the other locales are picked up by your app's in-product What's New view directly from the same file. `comingNext` is for the app UI only.
 
-**Item types:** `feat` → New Features, `fix` → Bug Fixes, `core` → Improvements. Anything else (including legacy `chore`) is silently dropped from the customer-facing render.
+**Item types:** `feat` → New Features, `fix` → Bug Fixes, `core` → Improvements, `lang` → Localization, `release` → Announcements. `chore` is dropped silently (internal work); any other type is dropped too, but with a warning.
 
-**Optional `issues` field.** Each item may carry an `"issues"` **array of strings** — the Jira keys (`"MP-417"`) and/or GitHub issues (`"#98"`) the change traces back to. Use a one-element list for a single ticket (`["MP-417"]`), several for a change that closes more than one, and omit the key entirely when there's none. It's pure provenance: both the CI pipeline and the app's in-product What's New view **ignore** it, so it never reaches customers. (It replaced the earlier numeric `pr` field, which was likewise unused — `issues` is more useful to a human reading the file, holds multiple tickets per change, and you set it without waiting for a PR number.)
+**Optional `issues` field.** Each item may carry an `"issues"` **array of strings** — the Jira keys (`"MP-417"`) and/or GitHub issues (`"#98"`) the change traces back to. It's pure provenance: the pipeline and the app's What's New view **ignore** it.
 
-There is **no per-item product routing** — each product has its own `Config/products/<id>.json` with its own `changelog`, so its items are already scoped to it. (A pro superset simply repeats the shared items in its own file plus its extras; the small duplication is accepted for the self-contained model.)
-
-**Tags mark ship moments (per product).** The **primary** product — the one that omits `id` — uses **bare `v*`** tags; every other product is prefixed `<id>-v*`. The prefix is a git/CI identifier only — it never enters the app (`CFBundleShortVersionString` is always the bare `X.Y.Z`). At most one product per repo may omit `id`.
-- `vX.Y.Z` (primary) / `<id>-vX.Y.Z` — stable release. You push it manually; CI validates it against that product's `changelog.versions[0].version`.
-- `vX.Y.Z-beta.N` / `<id>-vX.Y.Z-beta.N` — Nth beta. Auto-pushed on push→main, **only when that product's file changed** (changelog-driven — see below).
+**Tags mark ship moments — of builds that reach customers on their own.** The **primary** product — the one that omits `id` — uses **bare `v*`** tags; every other product is prefixed `<id>-v*`. The prefix is a git/CI identifier only; `CFBundleShortVersionString` is always the bare `X.Y.Z`. At most one product per repo may omit `id`.
+- `vX.Y.Z` / `<id>-vX.Y.Z` — the release. You push it by hand; CI validates it against that product's `changelog.versions[0].version`, builds the Direct leg (if there is one) for the stable Sparkle feed, and from then on builds nothing more of that version.
+- `vX.Y.Z-beta.N` / `<id>-vX.Y.Z-beta.N` — the Nth Direct beta, auto-pushed on push→main. **Only a product with a Direct leg gets these**: a Direct beta reaches customers by itself, through the Sparkle beta feed.
+- `vX.Y.Z-alpha.N` / `<id>-vX.Y.Z-alpha.N` — a manual alpha of a product with a Direct leg.
+- **App Store and Ad Hoc builds get no tag.** TestFlight has no alpha/beta/release stages: every upload reaches your internal testers, and sending a build to external testers or the App Store is your choice per build in App Store Connect. The build you tested is the one you submit; nothing is rebuilt on the version tag.
 
 **Marketing version per channel** (Apple's iTMS rejects non-`N.N.N` strings in `CFBundleShortVersionString`, so we split):
 - **Direct / Sparkle:** `<next>-beta.<N>` for betas (e.g. `2.12.0-beta.4`), bare `<next>` for releases.
-- **App Store / TestFlight:** bare `<next>` always; the build number disambiguates.
+- **App Store, Ad Hoc:** bare `<next>` always; the timestamp build number tells builds apart.
 
-**Beta is changelog-driven (the gate).** On every push to `main`, a product cuts its next beta **only when** (a) its `changelog.versions[0]` version isn't released (no `<id>-v<ver>` tag) AND (b) its own `Config/products/<id>.json` changed since its last beta. So editing only product A's changelog betas **only A**; a product sitting at an already-released version is skipped (idle), never blocked. Cut the next version by prepending a new `versions[0]` entry to that product's `changelog`.
+**What builds on a push (the gate).** A product builds **only when** (a) its `changelog.versions[0]` version isn't released (no bare `<prefix><ver>` tag) AND (b) it changed — its own `Config/products/<id>.json` **or any of its `source-paths`**:
+- **With a Direct leg:** since its last `-beta.N` tag, as before.
+- **Without one:** in this push (`github.event.before`..`HEAD`), because there are no tags to compare against. A failed build is retried with **Re-run**, which replays the same push. A manual run (no previous commit to compare against) builds.
+
+So editing only product A's changelog builds **only A**; a product at an already-released version is skipped (idle), never blocked. Start the next version by prepending a new `versions[0]` entry. **`force`** (a checkbox on the manual run) overrides "nothing changed", never "already released".
 
 ## Per-app setup
 
 ### 0. `Config/products/<id>.json` (one per product)
 
-Drop one file per product in `Config/products/`. Each holds build identity + a **required** inline `changelog` whose `versions[0].version` MUST be set before any CI run can produce a build for that product. Your app loads its `.changelog` at runtime for its What's New view; CI reads the same object for release notes and version derivation. Sample: [`examples/per-app/Config/products/app.json`](examples/per-app/Config/products/app.json).
+Drop one file per product in `Config/products/`. Each holds build identity, a **`platforms`** block and a **required** inline `changelog` whose `versions[0].version` MUST be set before any CI run can produce a build. Sample: [`examples/per-app/Config/products/app.json`](examples/per-app/Config/products/app.json).
 
-### 1. Secrets
+```jsonc
+// Config/products/app.json — an iPhone app that also ships on the Mac, on both Mac channels
+{
+  "id": "app",
+  "product-name": "MyApp",
+  "scheme": "MyApp",
+  "bundle-id": "com.example.myapp",
+  "platforms": {
+    "ios":   { "app-store": {} },
+    "macos": {
+      "direct":    { "appcast": true },
+      "app-store": { "scheme": "MyApp Store", "configuration": "Release Store" }
+    }
+  },
+  "source-paths": ["MyApp/**", "Project.swift"],
+  "changelog": { "versions": [ { "version": "1.0.0", "items": [] } ] }
+}
+```
 
-Set in your app's repo (or inherit from your org):
+Product-level fields (the defaults every leg inherits):
 
-| Secret | Purpose | Required for |
+| Field | Meaning |
+|---|---|
+| `id` | Short unique key — labels the build/artifact, prefixes tags (`<id>-v*`). **Omit it** (or `""`) for the *primary* product → bare `v*` tags (≤1 per repo; a non-empty `id` must equal the filename). |
+| `scheme` / `bundle-id` | Xcode scheme and the app's bundle ID. Required unless every leg sets its own. |
+| `product-name` | The `.app`'s name — required for a Direct leg (it names the DMG/ZIP); elsewhere it defaults to the scheme and only labels the run summary. |
+| `configuration` | Build configuration (default `Release`). |
+| `platforms` | **Required.** `{"<platform>": {"<channel>": { …leg overrides… }}}` — see the table above for the pairs. An empty object means the product's defaults. |
+| `source-paths` | **Recommended.** Git pathspecs this product builds from, e.g. `["MyApp/**", "Project.swift"]`. Without them only an edit to the product file counts as a change, so a code-only fix merges to `main`, builds nothing, and the run goes green with the fix unshipped; `plan` warns whenever it skips for that reason. |
+| `changelog` | **Required.** Inline release notes (see *How versioning works*). |
+
+Leg fields (inside `platforms.<platform>.<channel>`):
+
+| Field | Legs | Meaning |
 |---|---|---|
-| `DEVELOPER_ID_P12_BASE64` | Developer ID Application cert + private key (base64) | Direct |
-| `DEVELOPER_ID_PASSWORD` | Password for the Developer ID p12 | Direct |
-| `APPLE_DISTR_P12_BASE64` | Apple Distribution cert + private key — signs the .app | App Store |
-| `APPLE_DISTR_PASSWORD` | Password for the Apple Distribution p12 | App Store |
-| `MAC_DISTR_P12_BASE64` | Mac Installer Distribution cert + private key — signs the .pkg | App Store |
-| `MAC_DISTR_PASSWORD` | Password for the Mac Installer Distribution p12 | App Store |
-| `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | Both |
-| `PROV_PROF_DEVID_BASE64` | Main Developer ID provisioning profile | Direct |
-| `PROV_PROF_STORE_BASE64` | Main App Store provisioning profile | App Store |
-| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key | Both (notarization + altool) |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3 upload credentials | Direct |
-| `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key | Direct (appcast signing) |
-| `PROV_PROF_DEVID_FINDER_BASE64`, `PROV_PROF_STORE_FINDER_BASE64` | Finder extension profiles | If `has-finder-extension: true` |
-| `PROV_PROF_DEVID_QL_BASE64`, `PROV_PROF_STORE_QL_BASE64` | Quick Look extension profiles | If `has-quicklook-extension: true` |
+| `scheme`, `bundle-id`, `configuration`, `product-name` | all | What differs for this leg, e.g. a Mac App Store build with its own scheme, `.mas` bundle ID and `Release Store` configuration. |
+| `distribute` | `app-store`, `ad-hoc` | `false` builds and signs the leg without uploading it (default `true`). |
+| `appcast` | `direct` | `true` publishes to this product's Sparkle feed: betas as beta-channel items, releases as stable items. |
+| `s3-subpath` | `direct` | S3 + appcast sub-prefix (e.g. `"pro"`; empty = the bucket root). |
+| `appcast-filename` / `appcast-seed-path` | `direct` | This product's Sparkle feed filename + seed (defaults `appcast.xml` / `Config/appcast.xml`). |
+| `changelog-filename` | `direct` | Name of the published `Changelog.json`. Give a second product at the **same** `s3-subpath` a distinct name (e.g. `Changelog-pro.json`). |
+| `cert-secret` / `cert-password-secret` | all | Name of another certificate p12 + password secret for this leg (e.g. a legacy team kept after an account transfer). Default: the team's own. |
 
-### 2. Vars
+A key from the v0.5 format (`platform`, `build-app-store`, `scheme-store`, `has-finder`, `devid-profile-secret`, …) or from workflows-ios (`channel`, `profile-secret`, …) fails with a message naming what to use instead. Extensions need no key at all: every app and extension is signed with the profile for its own bundle ID.
 
-Only repo-level **infrastructure** lives in Variables — product identity moved into `Config/products/<id>.json` (next section).
+For a two-product repo, copy the templates in [`examples/per-app/two-product/`](examples/per-app/two-product/).
+
+### 1. Provisioning profiles — create them once, in the developer portal
+
+CI never stores a profile. Every build job first downloads the team's **active** profiles of the type it needs (`IOS_APP_STORE`, `IOS_APP_ADHOC`, `MAC_APP_STORE` or `MAC_APP_DIRECT`) from the App Store Connect API, with the key the app already passes for uploads. At archive time each target — the app and each extension, widget or Watch app — looks up the profile for **its own bundle ID**; at export, every bundle in the archive is matched to its profile by bundle ID again. So:
+
+- **Create one profile per bundle ID and channel** in the developer portal (any name). That's the whole setup; a new extension only needs its profile there.
+- **Renewal:** regenerate the profile in the portal; the next build uses it.
+- **The key must be allowed to read profiles.** The profile endpoints need an **Admin** App Store Connect key; a weaker key fails the first build step with `App Store Connect answered 403` and says so.
+- A bundle with several active profiles of a type uses a hand-made one before an Xcode-managed one, then the latest expiry.
+
+The download runs before any of the app's code (Tuist, SwiftPM plugins, the pre-build script), and the profiles it installed are removed again at the end of the job.
+
+### 2. Secrets
+
+Set once per team — as **organization** secrets for repos in an org; a personal account has no org secrets, so its repos hold copies.
+
+| Secret | Purpose | Legs |
+|---|---|---|
+| `APPLE_DISTR_P12_BASE64` / `APPLE_DISTR_PASSWORD` | Apple Distribution cert + private key (base64) and its password — signs the app | `app-store`, `ad-hoc` |
+| `MAC_DISTR_P12_BASE64` / `MAC_DISTR_PASSWORD` | Mac Installer Distribution cert + key — signs the `.pkg` | Mac `app-store` |
+| `DEVELOPER_ID_P12_BASE64` / `DEVELOPER_ID_PASSWORD` | Developer ID Application cert + key | `direct` |
+| `KEYCHAIN_PASSWORD` | Ephemeral build keychain password | all |
+| `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_BASE64` | App Store Connect API key (**Admin**) — downloads the profiles, uploads to TestFlight, notarizes | all |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | S3 upload credentials | `direct`, `ad-hoc` |
+| `SPARKLE_ED_PRIVATE_KEY` | Sparkle EdDSA private key — one per app | `direct` with `"appcast": true` |
+| `JIRA_API_TOKEN` | Files a ticket when gated tests fail | if `run-tests` |
+
+Inside the build jobs each secret reaches **only the step that uses it** — the certificates the keychain step, the App Store Connect key the profile download (and notarization) — never a job-level environment that the app's own scripts could read.
+
+### 3. Vars
+
+Only repo-level **infrastructure** lives in Variables.
 
 | Var | Purpose |
 |---|---|
-| `S3_DISTRIBUTION_PATH` | Full S3 URI for direct downloads, e.g. `s3://my-bucket/my-app` |
-| `S3_DOWNLOAD_URL` | Public base URL for the same path (download links in the run summary) |
-| `RUNS_ON_BUILD_DIRECT` | *(optional, temporary)* Override the runner for the Developer ID archive — see below |
-| `RUNS_ON_BUILD_STORE` | *(optional, temporary)* Override the runner for the App Store archive |
+| `S3_DISTRIBUTION_PATH` | Full S3 URI for downloads, e.g. `s3://my-bucket/my-app` (Direct and Ad Hoc) |
+| `S3_DOWNLOAD_URL` | Public HTTPS base URL for the same path (download links; the Ad Hoc manifest needs it) |
+| `RUNS_ON_BUILD_IOS` | *(optional, temporary)* Override the runner for the iPhone/iPad archive — see below |
+| `RUNS_ON_BUILD_MAC_STORE` | *(optional, temporary)* Override the runner for the Mac App Store archive |
+| `RUNS_ON_BUILD_MAC_DIRECT` | *(optional, temporary)* Override the runner for the Developer ID archive |
 | `RUNS_ON_TEST` | *(optional, temporary)* Override the runner for the test job |
-| `RUNS_ON_BUILD` | *(optional, temporary)* Override the runner for the PR verify job |
+| `RUNS_ON_BUILD` | *(optional, temporary)* Override the runner for the PR compile job |
 | `RUNS_ON_PUBLISH` | *(optional, temporary)* Override the runner for the publish job |
 | `RUNS_ON_DISCOVER` | *(optional, temporary)* Override the runner for the PR discover job |
-| `RUNS_ON_PREPARE` | *(optional, temporary)* Override the runner for the beta/release/alpha prepare job |
+| `RUNS_ON_PREPARE` | *(optional, temporary)* Override the runner for the distribute/release/alpha prepare job |
 
 #### Moving a job off the self-hosted Mac
 
@@ -119,56 +191,20 @@ The per-app shell's `runs-on-*` inputs are the standing answer to where a job ru
 
 ```
 Repo → Settings → Secrets and variables → Actions → Variables
-  RUNS_ON_BUILD_STORE = macos-26
+  RUNS_ON_BUILD_MAC_STORE = macos-26
 ```
 
-The next run's App Store archive goes to a GitHub-hosted `macos-26` image; `build-direct`, tests, and publish stay wherever the shell put them. Delete the variable and the next run is back to the input. Nothing is baked in — the override is read fresh on every run.
+The next run's Mac App Store archive goes to a GitHub-hosted `macos-26` image; the other jobs stay wherever the shell put them. Delete the variable and the next run is back to the input. Nothing is baked in — the override is read fresh on every run.
 
-The case this exists for: a self-hosted Mac on a beta Xcode. `notarytool` accepts a bundle built with one, so the Direct channel keeps working, but `altool` rejects it (error 90301), so every App Store upload fails until Apple ships the release Xcode. `RUNS_ON_BUILD_STORE=macos-26` sends just the store archive to a hosted image for those weeks. The same knob covers a Mac that is down, upgrading, or busy.
+The case this exists for: a self-hosted Mac on a beta Xcode. `notarytool` accepts a bundle built with one, so the Direct channel keeps working, but `altool` rejects it (error 90301), so every App Store upload fails until Apple ships the release Xcode. The same knob covers a Mac that is down, upgrading, or busy.
 
-Unlike the `runs-on-*` inputs, these take a **bare label** (`macos-26`), not JSON — a Variable is typed into a text box, so requiring `"macos-26"` with the quotes would be a footgun for no gain. That means one label per override, which is the point: an override always aims away from the multi-label self-hosted set and at a single hosted image. A permanent multi-label target is a real decision and belongs in the shell's input.
+Unlike the `runs-on-*` inputs, these take a **bare label** (`macos-26`), not JSON — a Variable is typed into a text box, so requiring `"macos-26"` with the quotes would be a footgun for no gain. An unset variable is `''`, which is falsy, so a repo that sets none behaves exactly as before.
 
-An unset variable is `''`, which is falsy, so a repo that sets none behaves exactly as before.
+**Pin `prepare` / `discover` too, or nothing runs.** These are the coordination jobs, and they go first — every build, test and publish job `needs:` one of them. A repo with no self-hosted runner that pins only the build inputs still deadlocks on the very first job, and it deadlocks *silently*: a job waiting for a runner that does not exist stays `queued` and never turns red. The two `gate` jobs need no variable of their own — each follows the job it gates.
 
-**Pin `prepare` / `discover` too, or nothing runs.** These are the coordination jobs, and they go first — every build, test and publish job `needs:` one of them. A repo with no self-hosted runner that pins only the build inputs still deadlocks on the very first job, and it deadlocks *silently*: a job waiting for a runner that does not exist stays `queued` and never turns red. `timeout-minutes` does not help, because that clock only starts once a job is running. The two `gate` jobs need no variable of their own — each follows the job it gates (`RUNS_ON_TEST` for `_test.yml`, the `runs-on` input for `memory-watch.yml`), so pinning that one moves both.
+**One runner process per macOS user.** Signing uses an ephemeral keychain and the user's keychain search list, which are per macOS user, not per job. Two jobs signing at once under the same user would take each other's keychain away — so run one runner process per macOS user on a self-hosted Mac (legs of one run then build one after the other).
 
-> **v0.4.0 (breaking):** the per-product Variables `SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID`(`_STORE`), and `BUNDLE_ID_FINDER` / `BUNDLE_ID_QUICKLOOK`(`_STORE`) are **retired**. That identity now lives in each `Config/products/<id>.json`. Delete the retired repo Variables when you migrate a repo to `@v0.5.9`.
-
-### 2a. Product files (v0.4.0)
-
-Each product is one **`Config/products/<id>.json`** in your repo — the orchestrators **discover** every `Config/products/*.json` (no `products` input in the shell). A single-product app has one file; a repo that ships two products (e.g. a free app + a pro superset) has two, and each versions, betas, and releases **independently**.
-
-Discovery-by-glob is fork-PR safe: a fork PR strips `vars.*` and `secrets.*`, but the product files ship with the checkout, so identity is always present.
-
-```jsonc
-// Config/products/app.json
-{ "id": "app", "platform": "macos",
-  "scheme": "MyApp", "product-name": "MyApp", "bundle-id": "com.example.myapp",
-  "scheme-store": "MyApp", "build-app-store": true, "distribute-app-store": true,
-  "changelog": { "versions": [ { "version": "1.0.0", "items": [] } ] } }
-```
-
-Fields — only `id`, `scheme`/`product-name`/`bundle-id` (Direct) or `scheme-store`/`bundle-id` (App Store), and `changelog` are required; everything else is optional and inherits the shell's top-level toggle defaults:
-
-| Field | Meaning |
-|---|---|
-| `id` | Short unique key — labels the build/artifact/S3 sub-path and prefixes tags (`<id>-v*`). **Omit it** (or `""`) for the *primary* product → bare `v*` tags (≤1 per repo; a non-empty `id` must equal the filename). |
-| `platform` | `macos` (default) or `ios` (build leg deferred — iOS products are excluded from the mac build for now). |
-| `scheme` / `product-name` / `bundle-id` | Direct build identity (`product-name` drives the `.app` + DMG/ZIP filenames). |
-| `scheme-store` / `bundle-id-store` | App Store scheme + bundle id (`bundle-id-store` defaults to `bundle-id`). |
-| `bundle-id-finder`(`-store`) / `bundle-id-quicklook`(`-store`), `has-finder` / `has-quicklook` | Extension bundle ids + toggles, per product. |
-| `build-direct` / `build-app-store` / `distribute-app-store` / `distribute-appcast` | Per-product channel toggles (default to the shell's top-level inputs). |
-| `devid-profile-secret` / `store-profile-secret` | Name of the provisioning-profile secret for this product (defaults to the shared `PROV_PROF_DEVID_BASE64` / `PROV_PROF_STORE_BASE64`). |
-| `devid-cert-secret` / `devid-cert-password-secret` | Name of the Developer ID **certificate** p12 + password secrets for this product (defaults to the shared `DEVELOPER_ID_P12_BASE64` / `DEVELOPER_ID_PASSWORD`). For a product signing under a different team — e.g. one that kept its legacy Developer ID after an account transfer. |
-| `s3-subpath` | S3 + appcast sub-prefix for this product (e.g. `"pro"`; empty = the bucket root). |
-| `source-paths` | **Recommended.** Git pathspecs this product builds from, e.g. `["MyApp/**", "Project.swift"]`. Beta cutting normally keys **only** on a change to this product file, so a commit that changes nothing but source cuts no beta and the run still goes green — the fix sits unshipped on `main`. Declaring the paths makes a code-only change cut a beta on its own. Omit it and `plan-beta` warns whenever it skips, since it cannot see code at all. |
-| `appcast-filename` / `appcast-seed-path` | This product's Sparkle feed filename + seed. |
-| `changelog-filename` | Filename for this product's published `Changelog.json` (default `Changelog.json`). Give a second product at the **same** `s3-subpath` a distinct name (e.g. `Changelog-pro.json`) so they don't overwrite each other. |
-| `changelog` | **Required.** Inline release notes — today's `Config/Changelog.json` schema, verbatim (see *How versioning works*). |
-
-For a two-product repo, copy the templates in [`examples/per-app/two-product/`](examples/per-app/two-product/). Keychain, ASC key, and the Sparkle key stay **team-shared**; the provisioning profiles **and the Developer ID certificate** are per-product — add the extra profile secrets (e.g. `PROV_PROF_DEVID_PRO_BASE64`) and, if a product signs under a different team, its cert secrets (e.g. `DEVELOPER_ID_P12_ALT_BASE64` + `DEVELOPER_ID_PASSWORD_ALT`), and name them in each product's `devid-profile-secret` / `store-profile-secret` / `devid-cert-secret` / `devid-cert-password-secret`.
-
-### 3. Per-app xcconfig
+### 4. Per-app xcconfig
 
 Two app-side requirements this workflow does NOT handle for you:
 
@@ -184,102 +220,58 @@ INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO
 MARKETING_VERSION = 0.0.0-dev
 ```
 
-Your `Info.plist` must reference `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)`.
+Your `Info.plist` must reference `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)`. Signing settings in the project don't matter to CI: it archives with manual signing, the team's distribution identity, and the profile each target looks up by bundle ID.
 
-### 4. Drop in the three shell workflows
+### 5. Drop in the four shell workflows
 
-Copy from [`examples/per-app/`](examples/per-app/):
+Copy from [`examples/per-app/`](examples/per-app/) — the same files serve every app; which legs exist is the product file's job:
 
-- `distribute-pr.yml`
-- `distribute-beta.yml`
-- `distribute-release.yml`
+- `distribute-pr.yml` — every PR: unsigned compile of every leg.
+- `distribute.yml` — every push to main (and by hand with `force`).
+- `distribute-release.yml` — your version tag.
+- `distribute-alpha.yml` — by hand, from any branch.
 
-Pin the `uses:` line to a tag (`@v0.5.9`), not `@main`. Uncomment per-app inputs as needed.
+Pin the `uses:` line to a tag (`@v0.6.0`), not `@main`. Uncomment per-app inputs as needed.
 
-**On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*. If your consumer repo lives in the **same org** as `LeanBytes/workflows-macos` (i.e. the `LeanBytes` org), you can simplify the shell to:
+**On secret passing.** GitHub Actions' `secrets: inherit` only crosses repository boundaries *within the same org/enterprise*, and it hands the shared workflow every secret the repo can see. The example shells list each secret explicitly, which works in every configuration and passes only what is used. Keep that block as-is.
 
-```yaml
-jobs:
-  pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.9
-    secrets: inherit
-    with:
-      # …
-```
+**Per-app build flags:** `use-tuist` (Xcode project generated by Tuist), `lfs` (pull git LFS files on the build checkouts — e.g. FlowMoose's Whisper model), `extra-xcodebuild-args` (build settings appended to the archive — not for signing), `products-dir` (default `Config/products`), `artifact-retention-days` (default `7` in a private repo; a **public** repo keeps build artifacts one day, since anyone signed in to GitHub can download them).
 
-If your consumer repo is in a **different account or org** (a personal account, a different org, a fork without an enterprise tie), `secrets: inherit` silently passes nothing — every signing step then fails with a `security: SecKeychainItemImport` error. The example shells use the explicit `secrets:` block that works universally. Keep that block as-is unless you want the same-org shortcut.
-
-The beta and release orchestrators expose four build/distribute toggles. In v0.4.0 these are **defaults** each product inherits when its `Config/products/<id>.json` omits them — a product can override any of them per product:
-
-| Input | Default | Effect |
-|---|---|---|
-| `build-direct` | `true` | Build the .app/DMG/ZIP via `_build-direct.yml` |
-| `build-app-store` | `false` | Build the .pkg via `_build-app-store.yml` |
-| `distribute-app-store` | `false` | altool upload to ASC. Requires `build-app-store`. |
-| `distribute-beta-appcast` *(beta only)* | `false` | Publish to the Sparkle beta channel. Requires `build-direct`. |
-| `distribute-stable-appcast` *(release only)* | `true` | Publish to the Sparkle stable channel. Requires `build-direct`. |
-
-A separate **`lfs`** input (default `false`, on every build workflow — PR, beta, release, nightly tests, memory-watch) makes `actions/checkout` pull the caller repo's git LFS files on the **build** checkouts. Flip it to `true` only when a build input is LFS-tracked (e.g. FlowMoose's Whisper `ggml-base.bin`); it's scoped to the checkouts that actually compile, so prepare/publish steps never pull the LFS payload. Apps with no LFS leave it off and are unaffected.
-
-Common configurations:
-
-- **Direct-only, Sparkle stable + beta channels.** `build-direct: true`, `distribute-beta-appcast: true` in the beta shell, `distribute-stable-appcast: true` in the release shell (the default).
-- **Direct + App Store, no beta appcast.** `build-direct: true`, `build-app-store: true`, `distribute-app-store: true`. Beta builds go to TestFlight (not the Sparkle beta channel); stable releases go to both Sparkle stable and the App Store.
-- **App Store only.** `build-direct: false`, `build-app-store: true`, `distribute-app-store: true`, `distribute-stable-appcast: false`.
-
-Per-app build flags also available: `use-tuist` (if your Xcode project is generated by Tuist), `extra-xcodebuild-args`, `products-dir` (defaults to `Config/products`). Extension toggles + bundle ids (`has-finder` / `has-quicklook`) now live per product in the product file. Also **`artifact-retention-days`** (default `7`) caps how long uploaded build/test artifacts are kept — they're consumed within the run, so 7 days is plenty; raise it only if you need longer for post-mortem debugging.
-
-**Release trigger.** The primary product releases via bare `vX.Y.Z`, extra products via `<id>-vX.Y.Z`. Your `distribute-release.yml` shell matches **both** and excludes the beta + alpha tags of either:
+**Release trigger.** The primary product releases via bare `vX.Y.Z`, other products via `<id>-vX.Y.Z`. Your `distribute-release.yml` shell matches **both** and excludes the beta + alpha tags of either:
 
 ```yaml
 on:
   push:
     tags:
-      - 'v*'          # primary product:  v2.12.0
-      - '*-v*'        # extra products:   pro-v1.1.1
+      - 'v[0-9]*'     # primary product:  v2.12.0
+      - '*-v[0-9]*'   # other products:   pro-v1.1.1
       - '!*-beta.*'
       - '!*-alpha.*'
 ```
 
-**GH (pre-)release titles + assets.** The release title matches the tag (`vX.Y.Z` / `<id>-vX.Y.Z`, or the `…-beta.N` variant for a pre-release). By default the DMG + ZIP are also attached to the release object as downloadable assets. Set **`attach-release-assets: false`** in the beta/release shell to skip that upload and **save GitHub storage/bandwidth** — the DMG/ZIP still go to S3 (where the appcast points), so only the redundant GitHub copy is dropped; the Release object + notes + tag are still created.
+For a product without a Direct leg, the release run only checks the tag and builds nothing — submit the build you tested in App Store Connect.
 
-**GitHub Discussions (off by default, releases only).** Set `create-discussion: true` in `distribute-release.yml`'s shell to auto-open a discussion alongside each stable release. The discussion's title matches the release title (e.g. `v0.15`); the category defaults to `Announcements` and can be overridden via `discussion-category: <name>`.
+**GH (pre-)release titles + assets.** The title matches the tag. By default a Direct build's DMG + ZIP are attached to its release; set **`attach-release-assets: false`** to skip that and **save GitHub storage/bandwidth** — the DMG/ZIP still go to S3 (where the appcast points).
 
-```yaml
-# In your per-app distribute-release.yml shell:
-with:
-  create-discussion: true
-  # discussion-category: Announcements   # default; override only if needed
-```
+**GitHub Discussions (off by default, releases only).** Set `create-discussion: true` in `distribute-release.yml`'s shell to auto-open a discussion alongside each stable release; the category defaults to `Announcements` (`discussion-category: <name>` overrides it). The orchestrator passes `--discussion-category` to `gh release create` as one atomic call, so if the discussion API errors, **no release is created**. Before turning it on, check that Discussions are enabled, a category with the **exact** name exists, and the shell grants `discussions: write` — a misleading `HTTP 404: Discussion could not be created` covers all three.
 
-**Prerequisites and caveats (test in a sandbox repo first).** The orchestrator passes `--discussion-category` to `gh release create` as a single atomic call. If the discussion API errors, the **entire release creation fails** and no release object is produced for the pushed tag. To avoid that on a real release, verify all of the following on the consumer repo before flipping the toggle on:
+**Alpha / invite builds (manual).** To hand a rough, early build to a hand-picked few — e.g. work on a `3.0` branch — run "Distribute Alpha" from the Actions tab on that branch. It builds every leg of the product, signed like a release:
+- **App Store legs** go to TestFlight as **internal-only** builds (`testFlightInternalTestingOnly`): App Store Connect keeps them from external testers and the App Store.
+- **Direct and Ad Hoc legs** go to an **unlisted `alpha/<label>/` prefix** on S3; the run summary prints the links. No appcast, no `Changelog.json`, no GitHub Release.
+- A product with a Direct leg is tagged `<prefix><base>-alpha.<N>` (`<base>` = its `changelog.versions[0].version` or the `version-base` input; `<N>` counted from existing alpha tags). **Exclude alpha tags from your release trigger** (shown above).
+- `product-id` may stay empty when the repo has one product. The shell must live on your **default branch** (for the "Run workflow" button) *and* on the branch you build.
 
-- Discussions enabled (`Settings → Features → Discussions` ticked).
-- A category with the **exact** name you pass exists in the Discussions tab (case-sensitive).
-- The caller's per-app shell grants `discussions: write` in its `permissions:` block (in addition to `contents: write`).
+### 6. Build hooks (app-specific setup and checks)
 
-If any of those are wrong you'll typically see a misleading `HTTP 404: Discussion could not be created. Make sure you passed a valid category name.` — the 404 covers all three failure modes. Beta pre-releases don't create discussions either way to avoid notification noise.
+For apps that need extra setup on the build runner (asset downloads, codegen, etc.), every build callee exposes `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the consumer repo, so no app-specific paths or URLs leak into the shared workflow.
 
-**Alpha / invite builds (optional, manual).** Sometimes you want to hand a rough, early build to a hand-picked few — e.g. work on a `3.0` branch that isn't ready for a public beta — *without* putting it on the appcast, the changelog, or the Releases tab. Drop in the optional fourth shell [`examples/per-app/distribute-alpha.yml`](examples/per-app/distribute-alpha.yml) and trigger it **manually** (Actions → "Distribute Alpha" → Run workflow → pick the branch).
-
-It builds the **same notarized DMG/ZIP a real release would** (so it opens cleanly on an invitee's Mac), uploads them to an **unlisted `alpha/<version>/` prefix** in your S3 bucket, and prints the download URL in the run summary — that's the link you send to invitees. It is deliberately off the public machinery: no Sparkle appcast, no `Changelog.json` write, no GitHub Release, no auto-update.
-
-- **Identity** is `<base>-alpha.<N>` (e.g. `3.0.0-alpha.1`), tagged `<id>-v<base>-alpha.<N>`. Pass `product-id` — `<base>` comes from that product's `Config/products/<id>.json` `changelog.versions[0].version` (or a `version-base` dispatch input); `<N>` is auto-counted from existing `<id>-v<base>-alpha.*` tags — the same tag-counter betas use.
-- **Exclude the alpha tag from your release trigger** (`!*-v*-alpha.*`, shown above) or its push fires a real release.
-- **`workflow_dispatch` visibility:** the shell must live on your **default branch** for the "Run workflow" button to appear, *and* on the branch you want to build (merge or cherry-pick it onto a v3 branch that forked earlier).
-- Secrets are the **Direct subset** — Developer ID + ASC (notarization) + AWS. No Sparkle key, no App Store certs.
-
-### 5. Build hooks (app-specific setup and checks)
-
-For apps that need extra setup on the build runner (asset downloads, codegen, etc.), the build callee exposes generic `pre-build-cache-*` + `pre-build-script` inputs. The script lives in the consumer repo, so no app-specific paths or URLs leak into the shared workflow.
-
-There is a matching **`post-build-script`** on every build path — `distribute-pr`, `distribute-beta`, `distribute-release`, `distribute-alpha` and both build callees. It is called with the built **`.app` bundle as `$1`**, and a non-zero exit fails the job. Use it to inspect what was produced: architecture slices, bundle contents, embedded extensions, entitlements.
+There is a matching **`post-build-script`** on every build path. It is called with the built **`.app` bundle as `$1`**, and a non-zero exit fails the job. Use it to inspect what was produced: architecture slices, bundle contents, embedded extensions, entitlements.
 
 ```yaml
       post-build-script: scripts/check-architectures.sh
 ```
 
-`$1` is always a `.app`, never a `.pkg`, so one script serves every channel. On the release paths it runs against the app **inside the archive**, right after `Archive` — that is the only artifact the Direct and App Store legs share (the store leg exports an installer), and it fails before notarization and upload rather than after. On a PR it runs after the unsigned compile, against the product in DerivedData.
+`$1` is always a `.app`, never a `.pkg` or `.ipa`, so one script serves every leg. On the distribution paths it runs against the app **inside the archive**, right after `Archive` — the only artifact every leg shares — so it fails before notarization and upload rather than after. On a PR it runs after the unsigned compile, against the product in DerivedData.
 
 Example — downloading a large model file from a public URL:
 
@@ -303,9 +295,22 @@ fi
 
 The cache step runs first (restores the file if previously cached under that key); the script runs after (downloads only if missing or stale). Both are skipped when `pre-build-cache-path` is empty.
 
+## Migrating from v0.5 or workflows-ios
+
+1. **Product files:** move each channel into `platforms`. The validator names every retired key and what replaces it; run `PRODUCTS_DIR=Config/products python3 <workflows-macos>/.github/scripts/products.py discover` locally to see them all at once. Typical moves:
+   - `build-direct` / `build-app-store` / `distribute-app-store` → `"platforms": {"macos": {"direct": {}, "app-store": {}}}`; `"distribute": false` on a leg that built without uploading.
+   - `scheme-store` / `bundle-id-store` → `scheme` / `bundle-id` on the app-store leg.
+   - `distribute-appcast`, `s3-subpath`, `appcast-*`, `changelog-filename` → onto the direct leg (`appcast` for the first).
+   - `has-finder`, `has-quicklook`, the extension bundle IDs and every `*-profile-secret` → delete them.
+   - workflows-ios `channel` → `"platforms": {"ios": {"app-store": {}}}` or `{"ad-hoc": {}}`.
+2. **Shells:** replace them with the four in `examples/per-app/`. `distribute-beta.yml` is now `distribute.yml` (the manual input is `force`, not `force-beta`); the build runner inputs are `runs-on-build-ios`, `runs-on-build-mac-store`, `runs-on-build-mac-direct`; the channel-default inputs and `configuration-*` are gone (the product file holds them); an iPhone app's `extra-xcodebuild-args` signing workaround is no longer needed.
+3. **Secrets:** make sure the App Store Connect key is an **Admin** key, then delete every `PROV_PROF_*` secret after the first green run. An Ad Hoc app that never uploaded to App Store Connect now needs the key too.
+4. **Variables:** `RUNS_ON_BUILD_STORE` / `RUNS_ON_BUILD_DIRECT` are now `RUNS_ON_BUILD_MAC_STORE` / `RUNS_ON_BUILD_MAC_DIRECT`; the old names are no longer read.
+5. **First push:** a Direct product continues its `-beta.N` count. A product without a Direct leg builds on the first push that changes its product file — the migration commit itself.
+
 ## Local builds (no CI)
 
-Need a signed + notarized DMG/ZIP to test a fix — without burning a commit and a CI run? `scripts/build-local.sh` runs the **exact same** pipeline `_build-direct.yml` runs (same ephemeral keychain from your base64 cert, same `xcodebuild` / `notarytool` / `ditto` commands, same Gatekeeper verification) on your Mac. The workflow and the script both call one shared core — `.github/scripts/build-direct.sh` — so they can't drift.
+Need a signed + notarized DMG/ZIP to test a fix — without burning a commit and a CI run? `scripts/build-local.sh` runs the **exact same** Direct pipeline `_build-mac-direct.yml` runs (same profile download, ephemeral keychain from your base64 cert, same `xcodebuild` / `notarytool` / `ditto` commands, same Gatekeeper verification) on your Mac. The workflow and the script both call one shared core — `.github/scripts/build-direct.sh` — so they can't drift.
 
 > The notarization round-trip (~1-3 min) dominates the wall-clock; use `--skip-notarize --no-dmg` for a fast signing-only inner loop while iterating.
 
@@ -339,23 +344,22 @@ codesign --verify --deep --strict --verbose=4 /tmp/verify/<PRODUCT_NAME>.app
 
 ## Publish ordering
 
-Both `distribute-beta.yml` and `distribute-release.yml` enforce strict sequencing in their publish job:
+`distribute.yml` enforces strict sequencing in its publish job:
 
 ```
-1. Render release notes from the product's inline .changelog
-2. (gate) altool → ASC          if distribute-app-store
-3. aws s3 cp DMG/ZIP            (silent — no Sparkle client polls these without an appcast pointer)
-4. (release only) aws s3 cp Changelog.json  (the product's .changelog, extracted, at its s3-subpath)
-5. (gate) appcast.xml update    if distribute-appcast
-6. per product: git push <id>-v<ver>-beta.N   (beta)
-7. gh release create <id>-v*    ← only if all prior steps succeeded
+1. Render release notes from each product's inline .changelog
+2. (gate) altool → App Store Connect    every app-store leg with distribute (iPhone and Mac)
+3. aws s3 cp IPA + manifest.plist       every ad-hoc leg — live at once
+4. aws s3 cp DMG/ZIP                    every direct leg (silent — no Sparkle client polls these yet)
+5. (gate) beta appcast update           every direct leg with "appcast": true
+6. per Direct product: git push <prefix><ver>-beta.N + gh release create --prerelease
 ```
 
-The appcast update is the "go-live" moment for Sparkle clients; the GH (pre-)release is created last. Beta cuts each product's own tag + pre-release; release creates one Release for the pushed `<id>-v*` tag. A failure anywhere short-circuits the rest, so you never end up with a half-published version.
+`distribute-release.yml` does steps 1, 4, the product's `Changelog.json` to S3, the stable appcast, and the GitHub Release last. The appcast update is the "go-live" moment for Sparkle clients; the GH (pre-)release is created last. A failure anywhere short-circuits the rest, so you never end up with a half-published version — and a build job that failed or was cancelled stops the publish job altogether.
 
 ## Memory-leak watch
 
-A reusable workflow ([`memory-watch.yml`](.github/workflows/memory-watch.yml)) that builds an app **unsigned**, runs it for hours on a runner, and samples its resident memory to catch leaks (unbounded growth). It reuses this repo's build knowledge — Tuist install/generate, runner selection, the `.shared-ci` script sharing — so a calling app sets only a few inputs; no signing, no release machinery.
+A reusable workflow ([`memory-watch.yml`](.github/workflows/memory-watch.yml)) that builds a Mac app **unsigned**, runs it for hours on a runner, and samples its resident memory to catch leaks (unbounded growth). It reuses this repo's build knowledge — Tuist install/generate, runner selection, the `.shared-ci` script sharing — so a calling app sets only a few inputs; no signing, no release machinery.
 
 Outcome semantics are deliberate — **a leak is a successful watch**:
 - healthy → job success
@@ -368,43 +372,48 @@ Outcome semantics are deliberate — **a leak is a successful watch**:
 
 Run an app's Swift tests at three points — all **opt-in** per app via `run-tests`. The logic is one reusable workflow ([`_test.yml`](.github/workflows/_test.yml)) wrapping one shared script ([`run-tests.sh`](.github/scripts/run-tests.sh)):
 
-- **On PRs** (`distribute-pr.yml`, `run-tests: true`) — a build + test run replaces the compile-only check; a failure turns the PR check **red** (no ticket — the author fixes before merge).
-- **On merge → beta** (`distribute-beta.yml`, `run-tests: true`) — tests **gate** the beta: if they fail, the build/publish jobs skip (**no beta is published**), the workflow fails, and a Jira ticket is filed.
+- **On PRs** (`distribute-pr.yml`, `run-tests: true`) — a failure turns the PR check **red** (no ticket — the author fixes before merge). The unsigned compile of every leg runs either way.
+- **On merge** (`distribute.yml`, `run-tests: true`) — tests **gate** the build: if they fail, nothing is built or published, the workflow fails, and a Jira ticket is filed.
 - **Nightly** — drop in [`examples/per-app/nightly-tests.yml`](examples/per-app/nightly-tests.yml) (it owns the cron, with a per-commit gate); a failure files a ticket.
 
 **Two runners**, via `test-runner: xcodebuild | swift | both`:
 - `swift` — the **core internal Swift package** (`swift-package-path`): `swift test --enable-code-coverage`, with an optional `coverage-min` gate. This is where coverage is reported.
-- `xcodebuild` — the **app/UI scheme** (`test-scheme`): unsigned `xcodebuild test` (XCTest + Swift Testing, app-hosted / UI).
+- `xcodebuild` — the **app/UI scheme** (`test-scheme`): unsigned `xcodebuild test` (XCTest + Swift Testing, app-hosted / UI) on `test-destination` — by default the Mac when the first product has a Mac leg, else an iOS Simulator (`platform=iOS Simulator,name=iPhone 17`).
 - `both` runs both; a failure in **either** fails the run.
 
-Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/fail + coverage %, no download); the `.xcresult` / coverage / `test-report.json` are uploaded as an artifact for deep dives. Failure tickets (beta + nightly) are filed into the board's **current active sprint** — needs `JIRA_*` vars + the `JIRA_API_TOKEN` secret (optional `JIRA_BOARD_ID`).
+Results render on the **run page** via `$GITHUB_STEP_SUMMARY` (per-runner pass/fail + coverage %, no download); the `.xcresult` / coverage / `test-report.json` are uploaded as an artifact for deep dives. Failure tickets are filed into the board's **current active sprint** — needs `JIRA_*` vars + the `JIRA_API_TOKEN` secret (optional `JIRA_BOARD_ID`).
 
 ## Versioning of *this* repo
 
 Pin caller `uses:` to a tag, not `@main`:
 
 ```yaml
-uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.9
+uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.0
 ```
 
-Patch versions (`v0.3.18`, `v0.3.19`, …) are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.4.0` is a breaking change** — product identity + changelog moved into per-product `Config/products/<id>.json`, shells became trigger-only, and release tags became `<id>-v*`; migrate a repo by creating its product files + swapping in the trigger-only shells when you bump it to `@v0.5.9`. Bump the tag in your callers when you want the change.
+Patch versions are the usual working unit — every workflow change ships under a new tag, and cross-callouts inside this repo plus `examples/per-app/` are bumped to that tag as part of the same commit. **`v0.6.0` is a breaking change** (see [Migrating](#migrating-from-v05-or-workflows-ios)); so was `v0.4.0`, which moved product identity + changelog into `Config/products/<id>.json`.
 
 ## Repo layout
 
 ```
 .github/
   workflows/
-    distribute-pr.yml          ← orchestrator (workflow_call)
-    distribute-beta.yml        ← orchestrator (workflow_call)
-    distribute-release.yml     ← orchestrator (workflow_call)
-    _build-direct.yml          ← internal callee (workflow_call)
-    _build-app-store.yml       ← internal callee (workflow_call)
-    memory-watch.yml           ← reusable memory-leak watch (workflow_call)
+    distribute-pr.yml          ← orchestrator: PR compile of every leg
+    distribute.yml             ← orchestrator: push to main
+    distribute-release.yml     ← orchestrator: version tag (Direct release)
+    distribute-alpha.yml       ← orchestrator: manual private alpha
+    _build-ios.yml             ← callee: iPhone/iPad .ipa (App Store, Ad Hoc)
+    _build-mac-store.yml       ← callee: Mac App Store .pkg
+    _build-mac-direct.yml      ← callee: notarized Mac DMG + ZIP
     _test.yml                  ← reusable test runner (workflow_call)
-    selftest.yml               ← lint + products.py offline tests (CI for this repo)
+    memory-watch.yml           ← reusable memory-leak watch (workflow_call)
+    selftest.yml               ← lint + offline tests (CI for this repo)
   scripts/
-    products.py                ← discovery / plan-beta / plan-release brain
+    products.py                ← discover / plan / plan-release / plan-alpha brain
+    profiles.py                ← provisioning profiles from App Store Connect: fetch, archive args, ExportOptions
     build-direct.sh            ← shared Direct build core (CI + local both run this)
+    classify-upload.sh         ← one definition of "did the altool upload land?"
+    manifest.sh                ← the Ad Hoc itms-services manifest
     changelog-from-json.sh     ← render Markdown notes from a product's inline .changelog
     update-appcast.sh          ← inject CDATA description + trim appcast.xml
     run-tests.sh               ← swift test / xcodebuild test core (+ coverage)
@@ -418,25 +427,23 @@ examples/
   local-build.env.example      ← template for build-local.sh's env file
   per-app/
     distribute-pr.yml          ← copy to each app repo (trigger-only shells)
-    distribute-beta.yml
+    distribute.yml
     distribute-release.yml
-    distribute-alpha.yml       ← optional manual invite-build shell
+    distribute-alpha.yml
     nightly-memory-watch.yml   ← memory-watch caller shell
     nightly-tests.yml          ← nightly test caller shell
-    Config/products/app.json   ← single-product sample
+    Config/products/app.json   ← single-product sample (iPhone + both Mac channels)
     two-product/               ← base + pro Config/products samples (FileFillet)
 tests/
-  run.sh + fixtures/           ← offline products.py suite
+  run.sh + fixtures/           ← offline suite: products.py, profiles.py, workflow wiring
 ```
-
-Versioning, beta-counting, and tag validation live in **`.github/scripts/products.py`** (`discover` / `plan-beta` / `plan-release`), called from the orchestrators' `prepare` / `discover` jobs and offline-tested via `tests/run.sh`.
 
 ## If you fork this repo private
 
 The canonical repo at `LeanBytes/workflows-macos` is public; consumers don't need any extra access plumbing. If you fork it to a private repo for your own use, two extra permissions matter:
 
 1. **Permission to *call* the workflows.** Set under your private fork's `Settings → Actions → General → Access`. Allow the consuming repos (or the whole org).
-2. **Permission to *clone* the fork's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only. Provide a token via a `SHARED_WORKFLOWS_TOKEN` secret on each consumer. The orchestrators **and** `_build-direct.yml` (which now clones `build-direct.sh`) reference it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` — the orchestrators forward it to the build callee automatically, and everything falls back to `github.token` when the fork is public.
+2. **Permission to *clone* the fork's scripts from inside the workflow.** The default `GITHUB_TOKEN` of a calling workflow is scoped to the calling repo only. Provide a token via a `SHARED_WORKFLOWS_TOKEN` secret on each consumer. Every `.shared-ci` checkout references it as `${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}` — the orchestrators forward it to the build callees, and everything falls back to `github.token` when the repo is public.
 
 Quickest path — fine-grained PAT:
 

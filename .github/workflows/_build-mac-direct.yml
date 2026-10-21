@@ -1,9 +1,8 @@
-# ── Internal Build Callee — Direct Distribution ──────────────────────────────
+# ── Internal Build Callee — Mac, Direct (Developer ID) ───────────────────────
 # Produces a notarized, stapled .app packaged as DMG + ZIP, uploaded as a
 # GitHub Actions workflow artifact (named by the artifact-name input; default
-# "direct-build"). An orchestrator
-# (distribute-pr/beta/release.yml) downloads the artifact and decides what
-# to do with it (S3, appcast, GH release).
+# "mac-direct-build"). An orchestrator (distribute-pr/distribute/release/alpha)
+# downloads the artifact and decides what to do with it (S3, appcast, GH release).
 #
 # The actual build/sign/notarize/package logic lives in the shared script
 # `.github/scripts/build-direct.sh` (the single source of truth — also run
@@ -12,28 +11,32 @@
 # github.job_workflow_sha) and calls ONE phase of that script per named step,
 # so the Actions UI keeps its per-step names, timings, and pass/fail icons.
 #
+# Provisioning profiles come from App Store Connect: the first step downloads
+# every Developer ID profile of the team, and the app and each of its
+# extensions are signed with the profile for their own bundle ID. No profile
+# is stored in GitHub and none is named anywhere.
+#
+# Each secret reaches only the steps that use it: the certificate the signing
+# step, the App Store Connect key the profile and notarization steps.
+#
 # Underscore prefix marks this as an internal callee — per-app shells should
-# call distribute-pr.yml / distribute-beta.yml / distribute-release.yml,
-# not this file directly.
+# call the distribute-*.yml orchestrators, not this file directly.
 #
 # Required caller secrets:
 #   DEVELOPER_ID_P12_BASE64  — Developer ID Application cert + private key
 #   DEVELOPER_ID_PASSWORD    — password for the Developer ID p12
 #   KEYCHAIN_PASSWORD        — ephemeral build keychain password
-#   PROV_PROF_DEVID_BASE64   — main Developer ID provisioning profile
-#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64  — ASC API key for notarization
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64  — App Store Connect API key:
+#                              downloads the profiles, notarizes the app
 #
-# Required caller inputs (v0.4.0 — product identity comes from the caller's
-# product list, no longer from repo vars):
-#   scheme-name, bundle-id, product-name
+# Required caller inputs (identity comes from the caller's product list):
+#   scheme-name, product-name
 #
-# Optional (gated by inputs):
-#   has-finder-extension     → PROV_PROF_DEVID_FINDER_BASE64, bundle-id-finder
-#   has-quicklook-extension  → PROV_PROF_DEVID_QL_BASE64,     bundle-id-quicklook
+# Optional:
 #   SHARED_WORKFLOWS_TOKEN   → only when consuming a PRIVATE fork of workflows-macos
 #                              (the shared-scripts checkout falls back to github.token)
 # ─────────────────────────────────────────────────────────────────────────────
-name: _build-direct
+name: _build-mac-direct
 
 on:
   workflow_call:
@@ -48,35 +51,23 @@ on:
         required: true
         type: string
       artifact-label:
-        description: "Label for artifact filenames (e.g. '1.3.0' or 'build-260406143022')"
+        description: "Label for artifact filenames (e.g. '1.3.0' or 'v1.3.0-beta.2')"
         required: true
         type: string
 
-      # ── Product identity (v0.4.0: supplied by the caller's product list) ─────
+      # ── Product identity (supplied by the caller's product list) ───────────
       scheme-name:
         description: "Xcode scheme to archive."
-        required: true
-        type: string
-      bundle-id:
-        description: "App bundle identifier (used as the provisioning-profile key)."
         required: true
         type: string
       product-name:
         description: "Product name — drives the .app name and the DMG/ZIP filenames."
         required: true
         type: string
-      bundle-id-finder:
-        description: "Finder Sync extension bundle id (used only when has-finder-extension)."
-        type: string
-        default: ""
-      bundle-id-quicklook:
-        description: "Quick Look extension bundle id (used only when has-quicklook-extension)."
-        type: string
-        default: ""
       artifact-name:
-        description: "GH Actions artifact name for the DMG+ZIP upload. Suffix per product to avoid matrix collisions."
+        description: "GH Actions artifact name for the DMG+ZIP upload. Suffix per leg to avoid matrix collisions."
         type: string
-        default: "direct-build"
+        default: "mac-direct-build"
 
       # ── Runner ─────────────────────────────────────────────────────────────
       job-timeout-minutes:
@@ -100,7 +91,7 @@ on:
         type: boolean
         default: false
       artifact-retention-days:
-        description: "Days to keep uploaded artifacts (default 7). Most are consumed within the same run; raise it per app if you need longer for debugging."
+        description: "Days to keep uploaded artifacts in a private repo (default 7). A public repo keeps them one day: anyone signed in to GitHub can download them, and the publish job needs them for minutes."
         type: number
         default: 7
 
@@ -130,16 +121,6 @@ on:
         type: string
         default: ""
 
-      # ── Extensions ─────────────────────────────────────────────────────────
-      has-finder-extension:
-        description: "App has a Finder Sync extension. Expects PROV_PROF_DEVID_FINDER_BASE64 secret + the bundle-id-finder input."
-        type: boolean
-        default: false
-      has-quicklook-extension:
-        description: "App has a Quick Look extension. Expects PROV_PROF_DEVID_QL_BASE64 secret + the bundle-id-quicklook input."
-        type: boolean
-        default: false
-
       # ── Build configuration ────────────────────────────────────────────────
       configuration:
         description: "Xcode build configuration to archive (e.g. Release, Release Store). Must match a configuration declared in the caller's .xcodeproj."
@@ -161,9 +142,6 @@ on:
       DEVELOPER_ID_P12_BASE64:        { required: true }
       DEVELOPER_ID_PASSWORD:          { required: true }
       KEYCHAIN_PASSWORD:              { required: true }
-      PROV_PROF_DEVID_BASE64:         { required: true }
-      PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
-      PROV_PROF_DEVID_QL_BASE64:      { required: false }
       ASC_KEY_ID:                     { required: true }
       ASC_ISSUER_ID:                  { required: true }
       ASC_KEY_BASE64:                 { required: true }
@@ -176,39 +154,26 @@ permissions:
 
 jobs:
   build:
-    # `vars.RUNS_ON_BUILD_DIRECT` overrides this with no commit — see README, "Moving a job
+    # `vars.RUNS_ON_BUILD_MAC_DIRECT` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
-    runs-on: ${{ vars.RUNS_ON_BUILD_DIRECT || fromJSON(inputs.runs-on) }}
+    runs-on: ${{ vars.RUNS_ON_BUILD_MAC_DIRECT || fromJSON(inputs.runs-on) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
 
     # Set once at the job level; every build-direct.sh phase reads these. The
-    # script reconstructs all paths + the profile name from this env, so each
-    # step (a separate process) needs no state from the previous one.
+    # script reconstructs all paths from this env, so each step (a separate
+    # process) needs no state from the previous one. No secrets here: a job-level
+    # secret would reach the app's own pre-build script and the Tuist installer.
     env:
       VERSION: ${{ inputs.version }}
       BUILD_NUMBER: ${{ inputs.build-number }}
       ARTIFACT_LABEL: ${{ inputs.artifact-label }}
       SCHEME_NAME: ${{ inputs.scheme-name }}
-      BUNDLE_ID: ${{ inputs.bundle-id }}
       PRODUCT_NAME: ${{ inputs.product-name }}
-      BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
-      BUNDLE_ID_QUICKLOOK: ${{ inputs.bundle-id-quicklook }}
       USE_TUIST: ${{ inputs.use-tuist }}
       CONFIGURATION: ${{ inputs.configuration }}
       EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
-      HAS_FINDER: ${{ inputs.has-finder-extension }}
-      HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
       WORK_DIR: /tmp/build/_work
       OUTPUT_DIR: /tmp/build
-      DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
-      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64: ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-      PROV_PROF_DEVID_FINDER_BASE64: ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
-      PROV_PROF_DEVID_QL_BASE64: ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
 
     steps:
       - name: Checkout
@@ -226,6 +191,16 @@ jobs:
           ref: ${{ github.job_workflow_sha }}
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      # Before any of the app's code runs (Tuist, SwiftPM plugins, the pre-build
+      # script), so none of it ever runs next to the App Store Connect key.
+      - name: Download provisioning profiles
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: bash .shared-ci/.github/scripts/build-direct.sh profiles
 
       - name: Resolve dependencies
         shell: bash
@@ -247,6 +222,10 @@ jobs:
 
       - name: Set up signing
         shell: bash
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: bash .shared-ci/.github/scripts/build-direct.sh signing
 
       - name: Archive
@@ -270,6 +249,10 @@ jobs:
 
       - name: Notarize
         shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
         run: bash .shared-ci/.github/scripts/build-direct.sh notarize
 
       - name: Staple
@@ -296,7 +279,7 @@ jobs:
             /tmp/build/*.dmg
             /tmp/build/*.zip
           if-no-files-found: error
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ github.event.repository.private == false && 1 || inputs.artifact-retention-days }}
 
       - name: Cleanup
         if: always()

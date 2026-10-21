@@ -1,7 +1,7 @@
 # ── Per-app PR shell ─────────────────────────────────────────────────────────
 # Copy to .github/workflows/distribute-pr.yml. Trigger-only: the orchestrator
-# discovers every Config/products/<id>.json and compiles each one. Fork-PR safe
-# (the product files ship with the checkout).
+# discovers every Config/products/<id>.json and compiles every leg, unsigned.
+# Fork-PR safe (the product files ship with the checkout; no secrets needed).
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute PR
 
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   pr:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.5.9
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-pr.yml@v0.6.0
     # ── Optional inputs (uncomment what applies) ────────────────────────────
     # with:
     #   use-tuist: true                                 # FlowMoose
@@ -23,6 +23,7 @@ jobs:
     #   runs-on-test: '"macos-26"'                      # the test job has its own runner
     #   run-tests: true                                 # build + test instead of compile-only
     #   test-runner: both
+    #   test-destination: "platform=iOS Simulator,name=iPhone 17"   # default: the Mac if the product has a Mac leg
     #   swift-package-path: Core
     #   coverage-min: "70"
     # secrets:                                          # only for a PRIVATE fork of workflows-macos

@@ -1,15 +1,22 @@
-# ── Internal Build Callee — App Store Distribution ───────────────────────────
-# Produces a signed .pkg for App Store / TestFlight upload, published as a
-# GitHub Actions workflow artifact (named by the artifact-name input; default
-# "app-store-build"). An orchestrator
-# (distribute-beta/release.yml) downloads the artifact and pushes it via
-# xcrun altool.
+# ── Internal Build Callee — Mac, App Store ───────────────────────────────────
+# Produces a signed .pkg for App Store Connect (TestFlight + Mac App Store),
+# published as a GitHub Actions workflow artifact (named by the artifact-name
+# input; default "mac-store-build"). An orchestrator downloads the artifact and
+# uploads it with `xcrun altool --type macos`.
 #
 # No notarization step — App Store has its own review pipeline.
 # No DMG/ZIP packaging — App Store wants the .pkg directly.
 #
+# Provisioning profiles come from App Store Connect: the first step downloads
+# every Mac App Store profile of the team, and the app and each of its
+# extensions are signed with the profile for their own bundle ID. No profile
+# is stored in GitHub and none is named anywhere.
+#
+# Each secret reaches only the steps that use it: the certificates the keychain
+# step, the App Store Connect key the profile step.
+#
 # Underscore prefix marks this as an internal callee — per-app shells should
-# call distribute-beta.yml / distribute-release.yml, not this file directly.
+# call the distribute-*.yml orchestrators, not this file directly.
 #
 # Required caller secrets:
 #   APPLE_DISTR_P12_BASE64  — Apple Distribution cert + private key (signs the .app)
@@ -17,74 +24,40 @@
 #   MAC_DISTR_P12_BASE64    — Mac Installer Distribution cert + private key (signs the .pkg)
 #   MAC_DISTR_PASSWORD      — password for the Mac Installer Distribution p12
 #   KEYCHAIN_PASSWORD       — ephemeral build keychain password
-#   PROV_PROF_STORE_BASE64  — main App Store provisioning profile
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_BASE64  — App Store Connect API key
+#                             (downloads the profiles)
 #
-# Required caller inputs (v0.4.0 — product identity comes from the caller's
-# product list, no longer from repo vars):
-#   scheme-name-store, bundle-id
-#
-# Optional inputs:
-#   bundle-id-store          — App Store bundle id when it differs from the Direct
-#                              channel's bundle-id. Defaults to bundle-id when empty.
-#
-# Optional (gated by inputs):
-#   has-finder-extension     → PROV_PROF_STORE_FINDER_BASE64, bundle-id-finder
-#                              (+ optional bundle-id-finder-store, defaults to bundle-id-finder)
-#   has-quicklook-extension  → PROV_PROF_STORE_QL_BASE64,     bundle-id-quicklook
-#                              (+ optional bundle-id-quicklook-store, defaults to bundle-id-quicklook)
+# Required caller inputs (identity comes from the caller's product list):
+#   scheme
 # ─────────────────────────────────────────────────────────────────────────────
-name: _build-app-store
+name: _build-mac-store
 
 on:
   workflow_call:
     inputs:
       # ── Required ───────────────────────────────────────────────────────────
       version:
-        description: "Marketing version (CFBundleShortVersionString)"
+        description: "Marketing version (CFBundleShortVersionString), bare X.Y.Z"
         required: true
         type: string
       build-number:
         description: "Build number (CFBundleVersion), timestamp-based"
         required: true
         type: string
-      artifact-label:
-        description: "Label for artifact filenames"
-        required: true
-        type: string
 
-      # ── Product identity (v0.4.0: supplied by the caller's product list) ─────
-      scheme-name-store:
-        description: "Xcode scheme to archive for App Store."
+      # ── Product identity (supplied by the caller's product list) ───────────
+      scheme:
+        description: "Xcode scheme to archive."
         required: true
         type: string
-      bundle-id:
-        description: "Direct-channel bundle id (the fallback base for the *-store ids)."
-        required: true
-        type: string
-      bundle-id-store:
-        description: "App Store bundle id. Defaults to bundle-id when empty."
-        type: string
-        default: ""
-      bundle-id-finder:
-        description: "Finder extension bundle id (used only when has-finder-extension)."
-        type: string
-        default: ""
-      bundle-id-finder-store:
-        description: "App Store Finder extension bundle id. Defaults to bundle-id-finder."
-        type: string
-        default: ""
-      bundle-id-quicklook:
-        description: "Quick Look extension bundle id (used only when has-quicklook-extension)."
-        type: string
-        default: ""
-      bundle-id-quicklook-store:
-        description: "App Store Quick Look extension bundle id. Defaults to bundle-id-quicklook."
-        type: string
-        default: ""
       artifact-name:
-        description: "GH Actions artifact name for the .pkg upload. Suffix per product to avoid matrix collisions."
+        description: "GH Actions artifact name for the .pkg upload. Suffix per leg to avoid matrix collisions."
         type: string
-        default: "app-store-build"
+        default: "mac-store-build"
+      internal-only:
+        description: "Mark the build in App Store Connect as internal-only: it never reaches external testers or the App Store. Set by distribute-alpha.yml."
+        type: boolean
+        default: false
 
       # ── Runner ─────────────────────────────────────────────────────────────
       job-timeout-minutes:
@@ -108,7 +81,7 @@ on:
         type: boolean
         default: false
       artifact-retention-days:
-        description: "Days to keep uploaded artifacts (default 7). Most are consumed within the same run; raise it per app if you need longer for debugging."
+        description: "Days to keep uploaded artifacts in a private repo (default 7). A public repo keeps them one day: anyone signed in to GitHub can download them, and the publish job needs them for minutes."
         type: number
         default: 7
 
@@ -118,15 +91,23 @@ on:
         type: boolean
         default: false
 
-      # ── Extensions ─────────────────────────────────────────────────────────
-      has-finder-extension:
-        description: "App has a Finder Sync extension. Expects PROV_PROF_STORE_FINDER_BASE64 secret + the bundle-id-finder input."
-        type: boolean
-        default: false
-      has-quicklook-extension:
-        description: "App has a Quick Look extension. Expects PROV_PROF_STORE_QL_BASE64 secret + the bundle-id-quicklook input."
-        type: boolean
-        default: false
+      # ── Build hooks (caller-provided) ──────────────────────────────────────
+      pre-build-cache-path:
+        description: "Path to cache via actions/cache@v5 (e.g. 'MyApp/Models/asset.bin'). Empty = no cache."
+        type: string
+        default: ""
+      pre-build-cache-key:
+        description: "Cache key. Required when pre-build-cache-path is set."
+        type: string
+        default: ""
+      pre-build-script:
+        description: "Path (relative to caller repo) of a bash script to run before archive. Sees the cache-restored files."
+        type: string
+        default: ""
+      post-build-script:
+        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
+        type: string
+        default: ""
 
       # ── Build configuration ────────────────────────────────────────────────
       configuration:
@@ -135,11 +116,6 @@ on:
         default: "Release"
 
       # ── Escape hatch ───────────────────────────────────────────────────────
-      post-build-script:
-        description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
-        type: string
-        default: ""
-
       extra-xcodebuild-args:
         description: "Additional xcodebuild settings appended to archive command"
         type: string
@@ -156,18 +132,21 @@ on:
       MAC_DISTR_P12_BASE64:           { required: true }
       MAC_DISTR_PASSWORD:             { required: true }
       KEYCHAIN_PASSWORD:              { required: true }
-      PROV_PROF_STORE_BASE64:         { required: true }
-      PROV_PROF_STORE_FINDER_BASE64:  { required: false }
-      PROV_PROF_STORE_QL_BASE64:      { required: false }
+      ASC_KEY_ID:                     { required: true }
+      ASC_ISSUER_ID:                  { required: true }
+      ASC_KEY_BASE64:                 { required: true }
+      # Only needed when the originating caller consumes a PRIVATE fork of
+      # workflows-macos; the shared-scripts checkout falls back to github.token.
+      SHARED_WORKFLOWS_TOKEN:         { required: false }
 
 permissions:
   contents: read
 
 jobs:
   build:
-    # `vars.RUNS_ON_BUILD_STORE` overrides this with no commit — see README, "Moving a job
+    # `vars.RUNS_ON_BUILD_MAC_STORE` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
-    runs-on: ${{ vars.RUNS_ON_BUILD_STORE || fromJSON(inputs.runs-on) }}
+    runs-on: ${{ vars.RUNS_ON_BUILD_MAC_STORE || fromJSON(inputs.runs-on) }}
     timeout-minutes: ${{ inputs.job-timeout-minutes }}
 
     steps:
@@ -176,6 +155,29 @@ jobs:
         with:
           submodules: true
           lfs: ${{ inputs.lfs }}
+
+      # workflows-macos itself (this repo) — pinned to the SAME commit as this
+      # reusable workflow, so profiles.py can never skew from the YAML.
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      # Every Mac App Store profile of the team. Archive and export match them to
+      # the app and each extension by bundle ID. Before any of the app's code
+      # runs (Tuist, SwiftPM plugins, the pre-build script), so none of it ever
+      # runs next to the App Store Connect key. Into RUNNER_TEMP, which is
+      # emptied before and after every job.
+      - name: Download provisioning profiles
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: python3 .shared-ci/.github/scripts/profiles.py fetch --type MAC_APP_STORE --out "$RUNNER_TEMP/profiles" --install
 
       # ── Tuist (opt-in) ─────────────────────────────────────────────────────
       - name: Install Tuist (via mise)
@@ -212,8 +214,21 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild -resolvePackageDependencies \
-            -scheme "${{ inputs.scheme-name-store }}" \
+            -scheme "${{ inputs.scheme }}" \
             -configuration Release
+
+      # ── Pre-build hooks (caller-provided) ──────────────────────────────────
+      - name: Pre-build cache
+        if: inputs.pre-build-cache-path != ''
+        uses: actions/cache@v5
+        with:
+          path: ${{ inputs.pre-build-cache-path }}
+          key: ${{ inputs.pre-build-cache-key }}
+
+      - name: Pre-build script
+        if: inputs.pre-build-script != ''
+        shell: bash
+        run: bash "${{ inputs.pre-build-script }}"
 
       # ── Diagnostic: verify .p12 envelope before security import ────────────
       # `security import` only says "MAC verification failed (wrong password?)"
@@ -316,67 +331,6 @@ jobs:
 
           rm /tmp/apple-distr.p12 /tmp/mac-distr.p12
 
-      # ── Provisioning profiles ──────────────────────────────────────────────
-      - name: Install main provisioning profile
-        shell: bash
-        env:
-          STORE_PROFILE_BASE64: ${{ secrets.PROV_PROF_STORE_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PROFILE_DIR"
-
-          echo "$STORE_PROFILE_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-store.provisionprofile"
-
-          PROFILE_NAME=$(security cms -D \
-            -i "$PROFILE_DIR/pp-store.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
-          echo "Main App Store profile: $PROFILE_NAME"
-
-      - name: Install Finder extension provisioning profile
-        if: inputs.has-finder-extension
-        shell: bash
-        env:
-          STORE_PROFILE_FINDER_BASE64: ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          echo "$STORE_PROFILE_FINDER_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-store-finder.provisionprofile"
-
-          PROFILE_NAME_FINDER=$(security cms -D \
-            -i "$PROFILE_DIR/pp-store-finder.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME_FINDER=$PROFILE_NAME_FINDER" >> $GITHUB_ENV
-          echo "Finder Extension App Store profile: $PROFILE_NAME_FINDER"
-
-      - name: Install Quick Look extension provisioning profile
-        if: inputs.has-quicklook-extension
-        shell: bash
-        env:
-          STORE_PROFILE_QL_BASE64: ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-
-          echo "$STORE_PROFILE_QL_BASE64" | base64 --decode \
-            > "$PROFILE_DIR/pp-store-quicklook.provisionprofile"
-
-          PROFILE_NAME_QUICKLOOK=$(security cms -D \
-            -i "$PROFILE_DIR/pp-store-quicklook.provisionprofile" \
-            | plutil -extract Name raw -)
-
-          echo "PROFILE_NAME_QUICKLOOK=$PROFILE_NAME_QUICKLOOK" >> $GITHUB_ENV
-          echo "Quick Look Extension App Store profile: $PROFILE_NAME_QUICKLOOK"
-
       # ── Verify signing identity (debug) ────────────────────────────────────
       - name: Verify signing identity
         shell: bash
@@ -394,9 +348,9 @@ jobs:
           set -euo pipefail
 
           # App Store Connect requires CFBundleShortVersionString to be 1-3
-          # dotted integers (e.g. "2.10.0"). Strip any git-describe suffix
-          # like "-34-g9e090ee" that beta builds carry. Build-number remains
-          # the per-build differentiator (CFBundleVersion).
+          # dotted integers (e.g. "2.10.0"). Strip any suffix as a safety net —
+          # the orchestrators already pass the bare version. Build-number
+          # remains the per-build differentiator (CFBundleVersion).
           MARKETING_VERSION="${INPUT_VERSION%%-*}"
           echo "Marketing version (stripped for ASC): ${MARKETING_VERSION}"
           echo "Build number:                          ${{ inputs.build-number }}"
@@ -407,12 +361,21 @@ jobs:
           rm -rf /tmp/build
           mkdir -p /tmp/build
 
+          # Each target signs with the profile for its own bundle ID (see
+          # profiles.py archive-args). Read line by line: a setting may contain
+          # spaces.
+          SIGN=()
+          while IFS= read -r a; do SIGN+=("$a"); done < <(python3 .shared-ci/.github/scripts/profiles.py \
+            archive-args --profiles "$RUNNER_TEMP/profiles/profiles.json" --type MAC_APP_STORE --cert "Apple Distribution")
+          [ "${#SIGN[@]}" -gt 0 ] || { echo "::error::no signing settings from profiles.py"; exit 1; }
+
           xcodebuild archive \
-            -scheme "${{ inputs.scheme-name-store }}" \
+            -scheme "${{ inputs.scheme }}" \
             -configuration "${{ inputs.configuration }}" \
             -archivePath /tmp/build/app.xcarchive \
             -destination "generic/platform=macOS" \
-            MARKETING_VERSION=${MARKETING_VERSION} \
+            "${SIGN[@]}" \
+            MARKETING_VERSION="${MARKETING_VERSION}" \
             CURRENT_PROJECT_VERSION=${{ inputs.build-number }} \
             ${{ inputs.extra-xcodebuild-args }}
 
@@ -440,64 +403,27 @@ jobs:
           bash "$POST_BUILD_SCRIPT" "${apps[0]}"
 
       # ── Export ─────────────────────────────────────────────────────────────
+      # Every app and extension in the archive gets the profile for its bundle
+      # ID; printed so a mismatch is obvious in the log (bundle ids and profile
+      # names, nothing secret). manageAppVersionAndBuildNumber is false: its
+      # default rewrites CFBundleVersion and destroys the timestamp build number.
       - name: Export for App Store distribution
         shell: bash
         env:
-          BUNDLE_ID: ${{ inputs.bundle-id }}
-          BUNDLE_ID_STORE: ${{ inputs.bundle-id-store }}
-          BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
-          BUNDLE_ID_FINDER_STORE: ${{ inputs.bundle-id-finder-store }}
-          BUNDLE_ID_QUICKLOOK: ${{ inputs.bundle-id-quicklook }}
-          BUNDLE_ID_QUICKLOOK_STORE: ${{ inputs.bundle-id-quicklook-store }}
-          HAS_FINDER: ${{ inputs.has-finder-extension }}
-          HAS_QUICKLOOK: ${{ inputs.has-quicklook-extension }}
+          INTERNAL_ONLY: ${{ inputs.internal-only }}
         run: |
           set -euo pipefail
-
-          # App Store bundle ids may differ from the Direct channel. Each *_STORE
-          # var is optional and falls back to its Direct counterpart, so apps that
-          # don't split keep working unchanged.
-          BUNDLE_ID_STORE="${BUNDLE_ID_STORE:-$BUNDLE_ID}"
-          BUNDLE_ID_FINDER_STORE="${BUNDLE_ID_FINDER_STORE:-$BUNDLE_ID_FINDER}"
-          BUNDLE_ID_QUICKLOOK_STORE="${BUNDLE_ID_QUICKLOOK_STORE:-$BUNDLE_ID_QUICKLOOK}"
-
-          PROFILES_XML="<key>${BUNDLE_ID_STORE}</key><string>${PROFILE_NAME}</string>"
-
-          if [ "$HAS_FINDER" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_FINDER_STORE}</key><string>${PROFILE_NAME_FINDER}</string>"
-          fi
-
-          if [ "$HAS_QUICKLOOK" = "true" ]; then
-            PROFILES_XML="${PROFILES_XML}<key>${BUNDLE_ID_QUICKLOOK_STORE}</key><string>${PROFILE_NAME_QUICKLOOK}</string>"
-          fi
-
-          cat > /tmp/ExportOptions.plist << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>uploadSymbols</key>
-            <true/>
-            <key>signingCertificate</key>
-            <string>Apple Distribution</string>
-            <key>installerSigningCertificate</key>
-            <string>3rd Party Mac Developer Installer</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              ${PROFILES_XML}
-            </dict>
-          </dict>
-          </plist>
-          PLIST
+          python3 .shared-ci/.github/scripts/profiles.py export-options \
+            --profiles "$RUNNER_TEMP/profiles/profiles.json" --type MAC_APP_STORE \
+            --archive /tmp/build/app.xcarchive --method app-store-connect \
+            --cert "Apple Distribution" --installer-cert "3rd Party Mac Developer Installer" \
+            --internal-only "$INTERNAL_ONLY" \
+            --out /tmp/build/ExportOptions.plist
 
           xcodebuild -exportArchive \
             -archivePath /tmp/build/app.xcarchive \
             -exportPath /tmp/build/export \
-            -exportOptionsPlist /tmp/ExportOptions.plist
+            -exportOptionsPlist /tmp/build/ExportOptions.plist
 
           ls -lh /tmp/build/export/
 
@@ -555,7 +481,7 @@ jobs:
           name: xcdistributionlogs-${{ inputs.artifact-name }}
           path: /tmp/diag-logs/
           if-no-files-found: warn
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ github.event.repository.private == false && 1 || inputs.artifact-retention-days }}
 
       # ── Publish as workflow artifact ───────────────────────────────────────
       - name: Upload .pkg as workflow artifact
@@ -564,7 +490,7 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: /tmp/build/export/*.pkg
           if-no-files-found: error
-          retention-days: ${{ inputs.artifact-retention-days }}
+          retention-days: ${{ github.event.repository.private == false && 1 || inputs.artifact-retention-days }}
 
       # ── Cleanup ────────────────────────────────────────────────────────────
       - name: Cleanup
@@ -574,9 +500,6 @@ jobs:
           set -euo pipefail
 
           security delete-keychain build.keychain || true
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store.provisionprofile"
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store-finder.provisionprofile"
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/pp-store-quicklook.provisionprofile"
+          python3 .shared-ci/.github/scripts/profiles.py cleanup --out "$RUNNER_TEMP/profiles" || true
           rm -rf /tmp/build /tmp/diag-logs
-          rm -f /tmp/ExportOptions.plist
           security list-keychains -d user -s login.keychain

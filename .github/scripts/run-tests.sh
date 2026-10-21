@@ -19,6 +19,8 @@
 #   TEST_RUNNER (default xcodebuild) | CONFIGURATION (default Debug; Release auto-enables
 #               ENABLE_TESTABILITY for the test build) | APP_NAME (for the report)
 #   xcodebuild: TEST_SCHEME (required for that runner), TEST_PLAN (opt), USE_TUIST, EXTRA_ARGS,
+#               TEST_DESTINATION (default the Mac; an iPhone app passes an iOS
+#               Simulator, e.g. "platform=iOS Simulator,name=iPhone 17"),
 #               PRE_BUILD_SCRIPT (opt)
 #   swift:      SWIFT_PACKAGE_PATH (default .), SWIFT_TEST_FILTER (opt), COVERAGE_MIN (opt; "" = report only)
 
@@ -113,7 +115,7 @@ run_xcodebuild() {
     ${container[@]+"${container[@]}"} \
     -scheme "$TEST_SCHEME" \
     -configuration "$CONFIGURATION" \
-    -destination 'platform=macOS' \
+    -destination "${TEST_DESTINATION:-platform=macOS}" \
     -resultBundlePath "$WORK/test-results.xcresult" \
     ${plan_args[@]+"${plan_args[@]}"} \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \

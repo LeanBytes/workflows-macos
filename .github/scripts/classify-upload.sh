@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Classify the result of `xcrun altool --upload-app`.
 #
-# Sourced by the publish steps of distribute-beta.yml and distribute-release.yml
+# Sourced by the publish steps of distribute.yml and distribute-alpha.yml
 # so both paths share one definition of "did this upload actually land?" — the
 # logic used to be duplicated inline in each, and drifted into the same bug twice.
 #

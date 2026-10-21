@@ -1,38 +1,39 @@
 # ── Release Distribution Orchestrator ────────────────────────────────────────
-# Called from a per-app shell triggered on a per-product tag push
-# `<id>-v<X.Y.Z>` (e.g. `main-v2.13.0`), with beta/alpha variants excluded.
+# Called from a per-app shell triggered on a per-product version tag push —
+# bare `vX.Y.Z` for the primary product, `<id>-vX.Y.Z` for the others — with
+# beta/alpha tags excluded.
 #
-# v0.4.0: products are DISCOVERED from Config/products/<id>.json (self-contained
-# per-product files, each with an inline changelog) and each product releases
-# INDEPENDENTLY. `products.py plan-release` parses the pushed tag → the single
-# target product, validates the version against THAT product's changelog, and
-# scopes the build + publish to it. Its DMG/ZIP + appcast + extracted
-# Changelog.json land under its own s3-subpath; a GitHub Release is created for
-# the tag.
+# `products.py plan-release` parses the tag → the single target product,
+# validates the version against THAT product's inline changelog, and returns
+# its Direct leg. Only Direct builds again: a Direct binary carries its version,
+# and stable users must never get one that says beta. App Store legs build
+# nothing — the build you tested in TestFlight is the one you submit in App
+# Store Connect — so for a product without a Direct leg the tag is just the
+# marker of what shipped, and this run ends green after the check.
 #
 # Strict fail-safe publish order — the GH Release is created LAST:
 #   1. Read notes from the product's inline changelog
-#   2. altool → ASC                  (if the product distributes App Store)   ← GATE 1
-#   3. S3 upload of DMG/ZIP          (silent)
-#   4. S3 upload of the product's Changelog.json (extracted from its file)
-#   5. Stable appcast update         (if the product distributes appcast)     ← visible
-#   6. gh release create             (for `<id>-v*`)
-#   7. gh release upload (DMG + ZIP)
+#   2. S3 upload of DMG/ZIP          (silent)
+#   3. S3 upload of the product's Changelog.json (extracted from its file)
+#   4. Stable appcast update         (if the direct leg sets "appcast": true) ← visible
+#   5. gh release create             (for the tag)
+#   6. gh release upload (DMG + ZIP)
 #
-# Per-app shell (drop into your repo at .github/workflows/distribute-release.yml):
+# Per-app shell (the full one is examples/per-app/distribute-release.yml):
 #
 #   on:
 #     push:
 #       tags:
+#         - 'v*'
 #         - '*-v*'
-#         - '!*-v*-beta.*'
-#         - '!*-v*-alpha.*'
+#         - '!*-beta.*'
+#         - '!*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.9
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.0
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-#         # … see examples/per-app/distribute-release.yml for the full list.
+#         # …
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-release
 
@@ -43,22 +44,6 @@ on:
         description: "Directory of per-product Config/products/<id>.json files."
         type: string
         default: "Config/products"
-      build-direct:
-        description: "Default build-direct for product files that omit it."
-        type: boolean
-        default: true
-      build-app-store:
-        description: "Default build-app-store for product files that omit it."
-        type: boolean
-        default: false
-      distribute-app-store:
-        description: "Default distribute-app-store (altool → ASC) for files that omit it."
-        type: boolean
-        default: false
-      distribute-stable-appcast:
-        description: "Default distribute-appcast (Sparkle stable channel) for files that omit it."
-        type: boolean
-        default: true
       use-tuist:
         type: boolean
         default: false
@@ -75,14 +60,6 @@ on:
         description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
-      has-finder-extension:
-        description: "Default has-finder for product files that omit it."
-        type: boolean
-        default: false
-      has-quicklook-extension:
-        description: "Default has-quicklook for product files that omit it."
-        type: boolean
-        default: false
       extra-xcodebuild-args:
         type: string
         default: ""
@@ -91,21 +68,15 @@ on:
         type: string
         default: '["self-hosted","macOS"]'
       build-timeout-minutes:
-        description: "Ceiling for each build job (Developer ID and App Store). Forwarded to the build callees."
+        description: "Ceiling for the build job. Forwarded to the build callee."
         type: number
         default: 60
-
       archive-timeout-minutes:
-        description: "Ceiling for the Archive step inside each build job. Must stay under build-timeout-minutes."
+        description: "Ceiling for the Archive step inside the build job. Must stay under build-timeout-minutes."
         type: number
         default: 30
-
-      runs-on-build-direct:
-        description: "Runner for the Developer ID (direct) archive."
-        type: string
-        default: '["self-hosted","macOS"]'
-      runs-on-build-store:
-        description: "Runner for the App Store archive. Must be a released Xcode — altool rejects a bundle whose Info.plist records a beta (error 90301), and that keys off the archiving Xcode, not the uploader."
+      runs-on-build-mac-direct:
+        description: "Runner for the Developer ID (Direct) archive."
         type: string
         default: '["self-hosted","macOS"]'
       runs-on-publish:
@@ -116,25 +87,9 @@ on:
         type: boolean
         default: false
       artifact-retention-days:
-        description: "Days to keep uploaded build artifacts (default 7). They're consumed within the run, so this is mostly for post-hoc debugging — raise it per app if you need longer."
+        description: "Days to keep uploaded build artifacts in a private repo (default 7; a public repo keeps them one day). They're consumed within the run, so this is mostly for post-hoc debugging."
         type: number
         default: 7
-      appcast-filename:
-        description: "Default appcast XML filename for files that omit it."
-        type: string
-        default: "appcast.xml"
-      appcast-seed-path:
-        description: "Default seed appcast.xml path for files that omit it."
-        type: string
-        default: "Config/appcast.xml"
-      configuration-direct:
-        description: "Xcode build configuration for the Direct archive. Default 'Release'."
-        type: string
-        default: "Release"
-      configuration-app-store:
-        description: "Xcode build configuration for the App Store archive. Default 'Release'."
-        type: string
-        default: "Release"
       attach-release-assets:
         description: "Attach the DMG/ZIP to the GitHub Release. Default true. Set false to save GitHub storage/bandwidth — the DMG/ZIP still upload to S3 (the real distribution) and the appcast points there; only the redundant GitHub copy is skipped. Notes + tag are still created."
         type: boolean
@@ -156,29 +111,12 @@ on:
     secrets:
       DEVELOPER_ID_P12_BASE64:        { required: false }
       DEVELOPER_ID_PASSWORD:          { required: false }
-      KEYCHAIN_PASSWORD:              { required: false }
-      PROV_PROF_DEVID_BASE64:         { required: false }
-      PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
-      PROV_PROF_DEVID_QL_BASE64:      { required: false }
-      # Per-product profiles: a product file names the secret via
-      # devid-profile-secret / store-profile-secret; unset falls back to the main
-      # PROV_PROF_*_BASE64. Add more as needed.
-      PROV_PROF_DEVID_PRO_BASE64:     { required: false }
-      PROV_PROF_STORE_PRO_BASE64:     { required: false }
-      # Per-product Developer ID CERTIFICATE (p12 + password). A product names
-      # them via devid-cert-secret / devid-cert-password-secret; unset falls back
-      # to DEVELOPER_ID_P12_BASE64 / DEVELOPER_ID_PASSWORD. Use when a product
-      # signs under a different team (e.g. an app kept its legacy Developer ID
-      # after an account transfer). Add more alternates as needed.
+      # A leg can sign with another certificate (e.g. a legacy team kept after
+      # an account transfer) by naming these in "cert-secret" /
+      # "cert-password-secret". Unset falls back to the team's own.
       DEVELOPER_ID_P12_ALT_BASE64:    { required: false }
       DEVELOPER_ID_PASSWORD_ALT:      { required: false }
-      APPLE_DISTR_P12_BASE64:         { required: false }
-      APPLE_DISTR_PASSWORD:           { required: false }
-      MAC_DISTR_P12_BASE64:           { required: false }
-      MAC_DISTR_PASSWORD:             { required: false }
-      PROV_PROF_STORE_BASE64:         { required: false }
-      PROV_PROF_STORE_FINDER_BASE64:  { required: false }
-      PROV_PROF_STORE_QL_BASE64:      { required: false }
+      KEYCHAIN_PASSWORD:              { required: false }
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
@@ -202,11 +140,9 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       build-number: ${{ steps.plan.outputs.build-number }}
       artifact-label: ${{ steps.plan.outputs.artifact-label }}
-      products: ${{ steps.plan.outputs.products }}
-      direct-products: ${{ steps.plan.outputs.direct-products }}
-      store-products: ${{ steps.plan.outputs.store-products }}
-      has-direct: ${{ steps.plan.outputs.has-direct }}
-      has-store: ${{ steps.plan.outputs.has-store }}
+      legs: ${{ steps.plan.outputs.legs }}
+      mac-direct-legs: ${{ steps.plan.outputs.mac-direct-legs }}
+      has-mac-direct: ${{ steps.plan.outputs.has-mac-direct }}
       has-appcast: ${{ steps.plan.outputs.has-appcast }}
     steps:
       - name: Checkout caller repo
@@ -222,120 +158,61 @@ jobs:
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
-      - name: Plan release (parse <id>-v* tag → scoped product, validate vs its changelog)
+      - name: Plan release (parse the tag → its product, validate vs its changelog)
         id: plan
         env:
           PRODUCTS_DIR: ${{ inputs.products-dir }}
           TAG: ${{ github.ref_name }}
-          DEF_BUILD_DIRECT: ${{ inputs.build-direct }}
-          DEF_BUILD_STORE: ${{ inputs.build-app-store }}
-          DEF_DIST_STORE: ${{ inputs.distribute-app-store }}
-          DEF_DIST_APPCAST: ${{ inputs.distribute-stable-appcast }}
-          DEF_HAS_FINDER: ${{ inputs.has-finder-extension }}
-          DEF_HAS_QL: ${{ inputs.has-quicklook-extension }}
-          DEF_APPCAST_FILENAME: ${{ inputs.appcast-filename }}
-          DEF_APPCAST_SEED: ${{ inputs.appcast-seed-path }}
         run: python3 .shared-ci/.github/scripts/products.py plan-release >> "$GITHUB_OUTPUT"
 
       - name: Show target
-        run: echo "Releasing '${{ steps.plan.outputs.target-id }}' v${{ steps.plan.outputs.version }} from tag '${{ github.ref_name }}'"
+        run: echo "Releasing '${{ steps.plan.outputs.target-id }}' v${{ steps.plan.outputs.version }} from tag '${{ github.ref_name }}' — Direct leg present ${{ steps.plan.outputs.has-mac-direct }}"
 
-  build-direct:
-    if: needs.prepare.outputs.has-direct == 'true'
+  build-mac-direct:
+    if: needs.prepare.outputs.has-mac-direct == 'true'
     needs: prepare
     strategy:
       fail-fast: false
       matrix:
-        product: ${{ fromJSON(needs.prepare.outputs.direct-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.9
+        leg: ${{ fromJSON(needs.prepare.outputs.mac-direct-legs) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.0
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
-      version: ${{ needs.prepare.outputs.version }}
+      version: ${{ matrix.leg.marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
-      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
-      artifact-name: direct-build-${{ matrix.product.id }}
-      scheme-name: ${{ matrix.product.scheme }}
-      bundle-id: ${{ matrix.product.bundle-id }}
-      product-name: ${{ matrix.product.product-name }}
-      bundle-id-finder: ${{ matrix.product.bundle-id-finder }}
-      bundle-id-quicklook: ${{ matrix.product.bundle-id-quicklook }}
-      has-finder-extension: ${{ matrix.product.has-finder }}
-      has-quicklook-extension: ${{ matrix.product.has-quicklook }}
+      artifact-label: ${{ matrix.leg.artifact-label }}
+      artifact-name: mac-direct-build-${{ matrix.leg.leg }}
+      scheme-name: ${{ matrix.leg.scheme }}
+      product-name: ${{ matrix.leg.product-name }}
+      configuration: ${{ matrix.leg.configuration }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
       pre-build-script: ${{ inputs.pre-build-script }}
-      runs-on: ${{ inputs.runs-on-build-direct }}
+      runs-on: ${{ inputs.runs-on-build-mac-direct }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-      configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
-      DEVELOPER_ID_P12_BASE64:        ${{ matrix.product.devid-cert-secret != '' && secrets[matrix.product.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD:          ${{ matrix.product.devid-cert-password-secret != '' && secrets[matrix.product.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
-      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64:         ${{ matrix.product.devid-profile-secret != '' && secrets[matrix.product.devid-profile-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
-      PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
-      PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
-      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
-      SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
-
-  build-app-store:
-    if: needs.prepare.outputs.has-store == 'true'
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        product: ${{ fromJSON(needs.prepare.outputs.store-products) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-app-store.yml@v0.5.9
-    with:
-      post-build-script: ${{ inputs.post-build-script }}
-      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
-      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
-      version: ${{ needs.prepare.outputs.version }}
-      build-number: ${{ needs.prepare.outputs.build-number }}
-      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
-      artifact-name: app-store-build-${{ matrix.product.id }}
-      scheme-name-store: ${{ matrix.product.scheme-store }}
-      bundle-id: ${{ matrix.product.bundle-id }}
-      bundle-id-store: ${{ matrix.product.bundle-id-store }}
-      bundle-id-finder: ${{ matrix.product.bundle-id-finder }}
-      bundle-id-finder-store: ${{ matrix.product.bundle-id-finder-store }}
-      bundle-id-quicklook: ${{ matrix.product.bundle-id-quicklook }}
-      bundle-id-quicklook-store: ${{ matrix.product.bundle-id-quicklook-store }}
-      has-finder-extension: ${{ matrix.product.has-finder }}
-      has-quicklook-extension: ${{ matrix.product.has-quicklook }}
-      use-tuist: ${{ inputs.use-tuist }}
-      runs-on: ${{ inputs.runs-on-build-store }}
-      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-      configuration: ${{ inputs.configuration-app-store }}
-      lfs: ${{ inputs.lfs }}
-      artifact-retention-days: ${{ inputs.artifact-retention-days }}
-    secrets:
-      APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
-      APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
-      MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}
-      MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}
-      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_STORE_BASE64:         ${{ matrix.product.store-profile-secret != '' && secrets[matrix.product.store-profile-secret] || secrets.PROV_PROF_STORE_BASE64 }}
-      PROV_PROF_STORE_FINDER_BASE64:  ${{ secrets.PROV_PROF_STORE_FINDER_BASE64 }}
-      PROV_PROF_STORE_QL_BASE64:      ${{ secrets.PROV_PROF_STORE_QL_BASE64 }}
+      DEVELOPER_ID_P12_BASE64: ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:   ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
+      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   publish-release:
-    needs: [prepare, build-direct, build-app-store]
-    # 'skipped' must stay permitted — a product that builds only one channel
-    # legitimately skips the other — but 'cancelled' must not: a wedged or
-    # evicted build job would otherwise publish a half-built release with one
-    # channel silently missing (see #10).
+    needs: [prepare, build-mac-direct]
+    # Only a built Direct leg publishes. 'cancelled' must not get through: a
+    # wedged or evicted build job would otherwise publish a release with the
+    # build silently missing (see #10).
     if: |
       always() &&
-      needs.build-direct.result != 'failure' && needs.build-direct.result != 'cancelled' &&
-      needs.build-app-store.result != 'failure' && needs.build-app-store.result != 'cancelled' &&
-      (needs.build-direct.result == 'success' || needs.build-app-store.result == 'success')
+      needs.build-mac-direct.result != 'failure' && needs.build-mac-direct.result != 'cancelled' &&
+      needs.build-mac-direct.result == 'success'
     # `vars.RUNS_ON_PUBLISH` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
     runs-on: ${{ vars.RUNS_ON_PUBLISH || fromJSON(inputs.runs-on-publish) }}
@@ -344,7 +221,7 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
       ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
-      PRODUCTS_JSON: ${{ needs.prepare.outputs.products }}
+      LEGS_JSON: ${{ needs.prepare.outputs.legs }}
       PRODUCTS_DIR: ${{ inputs.products-dir }}
       TARGET_ID: ${{ needs.prepare.outputs.target-id }}
     steps:
@@ -361,36 +238,27 @@ jobs:
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
-      - name: Download direct-build artifacts
-        if: needs.build-direct.result == 'success'
+      - name: Download mac-direct-build artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: direct-build-*
-          path: ./artifacts/direct
+          pattern: mac-direct-build-*
+          path: ./artifacts/mac-direct
 
-      - name: Download app-store-build artifacts
-        if: needs.build-app-store.result == 'success'
-        uses: actions/download-artifact@v8
-        with:
-          pattern: app-store-build-*
-          path: ./artifacts/app-store
-
-      - name: Expand products
+      - name: Expand legs
         shell: bash
         run: |
           set -euo pipefail
           # \x1f (Unit Separator), NOT tab — tab is IFS-whitespace and `read`
           # would collapse empty fields (e.g. an empty s3-subpath), shifting
           # every later column. \x1f is non-whitespace and never in the data.
-          python3 - "$PRODUCTS_JSON" > /tmp/products.tsv <<'PY'
+          python3 - "$LEGS_JSON" > /tmp/legs.tsv <<'PY'
           import json, sys
-          fields = ["id","product-name","s3-subpath","appcast-filename","appcast-seed-path",
-                    "changelog-filename","build-direct","build-app-store",
-                    "distribute-app-store","distribute-appcast"]
-          for p in json.loads(sys.argv[1]):
-              print("\x1f".join(str(p.get(k, "")) for k in fields))
+          fields = ["leg", "id", "product-name", "s3-subpath", "appcast-filename",
+                    "appcast-seed-path", "changelog-filename", "appcast"]
+          for l in json.loads(sys.argv[1]):
+              print("\x1f".join(str(l.get(k, "")) for k in fields))
           PY
-          echo "Products:"; tr '\037' '\t' < /tmp/products.tsv
+          echo "Legs:"; tr '\037' '\t' < /tmp/legs.tsv
 
       - name: Normalize artifact layout
         shell: bash
@@ -399,79 +267,27 @@ jobs:
           # actions/download-artifact extracts a LONE matched artifact flat into
           # the base path (no per-artifact subdir); multiple matches DO get subdirs
           # (merge-multiple defaults false). Re-nest a flattened artifact so the
-          # per-product globs below can always assume artifacts/<chan>/<name>/ —
-          # otherwise a single-product release finds "No .pkg / no DMG".
-          while IFS=$'\x1f' read -r id _; do
-            for pair in "direct:direct-build" "app-store:app-store-build"; do
-              chan="${pair%%:*}"; pre="${pair##*:}"
-              base="./artifacts/$chan"; want="$base/$pre-$id"
-              if [ -d "$base" ] && [ ! -d "$want" ] && [ -n "$(find "$base" -maxdepth 1 -type f 2>/dev/null)" ]; then
-                mkdir -p "$want"
-                find "$base" -maxdepth 1 -type f -exec mv {} "$want"/ \;
-                echo "re-nested flattened $chan artifact → $want/"
-              fi
-            done
-          done < /tmp/products.tsv
+          # per-leg globs below can always assume artifacts/mac-direct/<name>/ —
+          # otherwise a single-leg release finds "no DMG".
+          while IFS=$'\x1f' read -r leg _; do
+            base="./artifacts/mac-direct"; want="$base/mac-direct-build-$leg"
+            if [ -d "$base" ] && [ ! -d "$want" ] && [ -n "$(find "$base" -maxdepth 1 -type f 2>/dev/null)" ]; then
+              mkdir -p "$want"
+              find "$base" -maxdepth 1 -type f -exec mv {} "$want"/ \;
+              echo "re-nested flattened artifact → $want/"
+            fi
+          done < /tmp/legs.tsv
 
-      # ── Release notes from the (single) target product's inline changelog ──
+      # ── Release notes from the target product's inline changelog ──────────
       - name: Read release notes from the product changelog
         shell: bash
-        env:
-          MARKETING_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-            CHANGELOG_PATH="${PRODUCTS_DIR}/$id.json" VERSION="$MARKETING_VERSION" \
-              .shared-ci/.github/scripts/changelog-from-json.sh > "/tmp/notes-$id.md" || true
-          done < /tmp/products.tsv
-          # Per-product release → the target product's notes drive the GH body.
-          cp "/tmp/notes-${TARGET_ID}.md" /tmp/notes.md 2>/dev/null || : > /tmp/notes.md
+          CHANGELOG_PATH="${PRODUCTS_DIR}/${TARGET_ID}.json" VERSION="$VERSION" \
+            .shared-ci/.github/scripts/changelog-from-json.sh > /tmp/notes.md || : > /tmp/notes.md
           echo "Notes ($(wc -c < /tmp/notes.md) bytes):"; cat /tmp/notes.md
 
-      # ── GATE 1: App Store upload ──────────────────────────────────────────
-      - name: Install App Store Connect API key (for altool)
-        if: needs.build-app-store.result == 'success'
-        shell: bash
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$ASC_KEY_BASE64" | base64 --decode \
-            > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
-
-      - name: Upload to App Store Connect (per product)
-        if: needs.build-app-store.result == 'success'
-        shell: bash
-        env:
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-        run: |
-          set -uo pipefail
-          source .shared-ci/.github/scripts/classify-upload.sh
-          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-            { [ "$bas" = "True" ] && [ "$das" = "True" ]; } || continue
-            echo "::group::App Store upload — product=$id"
-            PKG=$(ls ./artifacts/app-store/app-store-build-$id/*.pkg 2>/dev/null | head -1 || true)
-            if [ -z "$PKG" ] || [ ! -f "$PKG" ]; then
-              echo "::error::No .pkg for product $id"; echo "::endgroup::"; exit 1
-            fi
-            set +e
-            OUTPUT=$(xcrun altool --upload-app --type macos --file "$PKG" \
-              --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1)
-            RC=$?
-            set -e
-            echo "$OUTPUT"
-            case "$(classify_upload "$RC" "$OUTPUT")" in
-              accepted)        echo "App Store upload accepted for $id"; echo "::endgroup::"; continue ;;
-              already-present) echo "Build for $id already present — treating as success."; echo "::endgroup::"; continue ;;
-            esac
-            echo "::error::altool failed for $id (exit ${RC})"; echo "::endgroup::"; exit 1
-          done < /tmp/products.tsv
-
       - name: Install AWS CLI
-        if: needs.build-direct.result == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -482,8 +298,7 @@ jobs:
           fi
           aws --version
 
-      - name: Upload DMG + ZIP to S3 (per product)
-        if: needs.build-direct.result == 'success'
+      - name: Upload DMG + ZIP to S3
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -492,21 +307,19 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-            [ "$bd" = "True" ] || continue
-            echo "::group::S3 upload — product=$id"
+          while IFS=$'\x1f' read -r leg id pname sub afile aseed clfile acast; do
+            echo "::group::S3 upload — $leg"
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
-            for f in ./artifacts/direct/direct-build-$id/*.dmg ./artifacts/direct/direct-build-$id/*.zip; do
+            for f in ./artifacts/mac-direct/mac-direct-build-$leg/*.dmg ./artifacts/mac-direct/mac-direct-build-$leg/*.zip; do
               [ -e "$f" ] || continue
               aws s3 cp "$f" "${DEST}/$(basename "$f")"
               echo "Uploaded $(basename "$f") → ${DEST}/"
             done
             echo "::endgroup::"
-          done < /tmp/products.tsv
+          done < /tmp/legs.tsv
 
       # ── Changelog.json → S3, extracted from the product's inline changelog ─
-      - name: Upload Changelog.json to S3 (per product)
-        if: needs.build-direct.result == 'success'
+      - name: Upload Changelog.json to S3
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -515,8 +328,7 @@ jobs:
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-            [ "$bd" = "True" ] || continue
+          while IFS=$'\x1f' read -r leg id pname sub afile aseed clfile acast; do
             # Publish ONLY the product's .changelog (schema-identical to the old
             # Changelog.json) — never the build identity in the product file.
             python3 -c 'import json,sys; json.dump(json.load(open(sys.argv[1]))["changelog"], open(sys.argv[2],"w"))' \
@@ -524,9 +336,9 @@ jobs:
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
             aws s3 cp "/tmp/cl-$id.json" "${DEST}/${clfile}" --content-type "application/json"
             echo "Uploaded ${clfile} → ${DEST}/"
-          done < /tmp/products.tsv
+          done < /tmp/legs.tsv
 
-      # ── GATE 2: Stable appcast update ─────────────────────────────────────
+      # ── GATE: Stable appcast update ────────────────────────────────────────
       - name: Download Sparkle
         if: needs.prepare.outputs.has-appcast == 'true'
         shell: bash
@@ -542,7 +354,7 @@ jobs:
           tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
           chmod +x /tmp/sparkle/bin/generate_appcast
 
-      - name: Update Sparkle stable appcast (per product)
+      - name: Update Sparkle stable appcast
         if: needs.prepare.outputs.has-appcast == 'true'
         shell: bash
         env:
@@ -553,12 +365,12 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-            { [ "$bd" = "True" ] && [ "$dap" = "True" ]; } || continue
-            echo "::group::Stable appcast — product=$id"
+          while IFS=$'\x1f' read -r leg id pname sub afile aseed clfile acast; do
+            [ "$acast" = "True" ] || continue
+            echo "::group::Stable appcast — $leg"
             WORK="/tmp/appcast-$id"
             rm -rf "$WORK"; mkdir -p "$WORK"   # LB-459: start clean (persistent self-hosted /tmp)
-            cp ./artifacts/direct/direct-build-$id/*.zip "$WORK"/
+            cp ./artifacts/mac-direct/mac-direct-build-$leg/*.zip "$WORK"/
             DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}"
             if aws s3 cp "${DEST}/${afile}" "${WORK}/${afile}"; then
               echo "Downloaded existing ${afile}"
@@ -568,15 +380,15 @@ jobs:
             fi
             echo "$SPARKLE_ED_PRIVATE_KEY" | /tmp/sparkle/bin/generate_appcast --ed-key-file - "${WORK}/"
             NOTES=""
-            [ -f "/tmp/notes-$id.md" ] && NOTES=$(cat "/tmp/notes-$id.md")
+            [ -s /tmp/notes.md ] && NOTES=$(cat /tmp/notes.md)
             VERSION="$VERSION" NOTES="$NOTES" APPCAST_PATH="${WORK}/${afile}" \
               .shared-ci/.github/scripts/update-appcast.sh
             aws s3 cp "${WORK}/${afile}" "${DEST}/${afile}" --content-type "application/xml"
             echo "Uploaded ${afile} → ${DEST}/ (stable live for $id)"
             echo "::endgroup::"
-          done < /tmp/products.tsv
+          done < /tmp/legs.tsv
 
-      # ── FINAL: GitHub Release for `<id>-v*` ───────────────────────────────
+      # ── FINAL: GitHub Release for the tag ──────────────────────────────────
       - name: Create GitHub Release
         shell: bash
         env:
@@ -597,21 +409,20 @@ jobs:
           gh release create "${{ github.ref_name }}" "${ARGS[@]}"
 
       - name: Attach DMG + ZIP to GH Release
-        if: needs.build-direct.result == 'success' && inputs.attach-release-assets
+        if: inputs.attach-release-assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          ASSETS=( ./artifacts/direct/direct-build-*/*.dmg ./artifacts/direct/direct-build-*/*.zip )
+          ASSETS=( ./artifacts/mac-direct/mac-direct-build-*/*.dmg ./artifacts/mac-direct/mac-direct-build-*/*.zip )
           if [ ${#ASSETS[@]} -eq 0 ]; then
             echo "No DMG/ZIP assets to attach"; exit 0
           fi
           gh release upload "${{ github.ref_name }}" --repo "${{ github.repository }}" --clobber "${ASSETS[@]}"
 
       - name: Write release summary
-        if: needs.build-direct.result == 'success'
         shell: bash
         env:
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
@@ -624,17 +435,15 @@ jobs:
             echo
             echo "| Artifact | Download |"
             echo "|---|---|"
-            while IFS=$'\x1f' read -r id pname sub afile aseed clfile bd bas das dap; do
-              [ "$bd" = "True" ] || continue
+            while IFS=$'\x1f' read -r leg id pname sub afile aseed clfile acast; do
               BASE="${S3_DOWNLOAD_URL}${sub:+/$sub}"
               echo "| DMG | [${pname}_${ARTIFACT_LABEL}.dmg](${BASE}/${pname}_${ARTIFACT_LABEL}.dmg) |"
               echo "| ZIP | [${pname}_${ARTIFACT_LABEL}.zip](${BASE}/${pname}_${ARTIFACT_LABEL}.zip) |"
-            done < /tmp/products.tsv
+            done < /tmp/legs.tsv
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cleanup
         if: always()
         shell: bash
         run: |
-          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-* /tmp/notes.md /tmp/notes-*.md /tmp/cl-*.json /tmp/products.tsv
-          rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8
+          rm -rf /tmp/sparkle /tmp/sparkle.tar.xz /tmp/appcast-* /tmp/notes.md /tmp/cl-*.json /tmp/legs.tsv

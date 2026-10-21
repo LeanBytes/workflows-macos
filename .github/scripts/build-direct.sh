@@ -5,7 +5,7 @@
 # .app, packaged as a DMG and a ZIP, in OUTPUT_DIR.
 #
 # SINGLE SOURCE OF TRUTH for the Direct build. Two callers:
-#   • CI — `_build-direct.yml` checks this repo out into `.shared-ci/` (at the
+#   • CI — `_build-mac-direct.yml` checks this repo out into `.shared-ci/` (at the
 #     same commit, via github.job_workflow_sha) and runs ONE phase per named
 #     workflow step, so the GitHub Actions UI keeps its per-step names,
 #     timings, and pass/fail icons:
@@ -16,18 +16,17 @@
 #
 # Because CI runs each phase as a SEPARATE process, no phase may rely on
 # in-memory state from a previous one. Paths are pure functions of the env.
-# Profile Names are captured during `signing` (BEFORE archive — `xcodebuild`
-# renames the files under ~/Library/MobileDevice/Provisioning Profiles/ to
-# UUIDs) and persisted to WORK_DIR for `export` to read; the installed profile
-# is still matched by Name at export time. Everything else is re-derived.
+# The `profiles` phase downloads the team's Developer ID profiles from App Store
+# Connect into WORK_DIR/profiles; archive and export read them back from there.
 #
 # Usage:
 #   build-direct.sh <phase>     # run a single phase (CI: one per workflow step)
-#   build-direct.sh all         # run setup→…→verify-packages, trap cleanup (local)
+#   build-direct.sh all         # run profiles→…→verify-packages, trap cleanup (local)
 #
 # Phases:
+#   profiles         download + install the team's Developer ID profiles (ASC key)
 #   setup            resolve SwiftPM deps, or `tuist install && generate`
-#   signing          ephemeral keychain + provisioning profiles + ASC key
+#   signing          ephemeral keychain with the Developer ID certificate
 #   archive          xcodebuild archive
 #   post-build       caller's POST_BUILD_SCRIPT against the archived .app (opt-in)
 #   export           xcodebuild -exportArchive (method=developer-id, manual)
@@ -36,7 +35,7 @@
 #   verify           pre-package: stapler validate + spctl + codesign
 #   package          DMG (hdiutil) + ZIP (ditto, metadata-stripped)
 #   verify-packages  post-package: re-check spctl + codesign from DMG & ZIP
-#   cleanup          delete keychain/profiles/ASC key, restore search list
+#   cleanup          delete the keychain and the profiles it installed, restore search list
 #
 # Required env (config):
 #   SCHEME_NAME BUNDLE_ID PRODUCT_NAME VERSION BUILD_NUMBER ARTIFACT_LABEL
@@ -44,22 +43,20 @@
 #   OUTPUT_DIR  where the .dmg/.zip land; NOT wiped by cleanup, but phase_package
 #               clears its *.dmg/*.zip first so a persistent (self-hosted)
 #               OUTPUT_DIR can't leak a prior product's artifacts here (LB-459)
-# Required env (secrets; base64 unless noted):
-#   DEVELOPER_ID_P12_BASE64  DEVELOPER_ID_PASSWORD (plain)  KEYCHAIN_PASSWORD (plain)
-#   PROV_PROF_DEVID_BASE64
-#   ASC_KEY_ID (plain)  ASC_ISSUER_ID (plain)  ASC_KEY_BASE64
+# Required env (secrets; base64 unless noted). Each phase checks only the ones
+# it uses, so CI hands every step just those:
+#   signing             DEVELOPER_ID_P12_BASE64  DEVELOPER_ID_PASSWORD (plain)  KEYCHAIN_PASSWORD (plain)
+#   profiles, notarize  ASC_KEY_ID (plain)  ASC_ISSUER_ID (plain)  ASC_KEY_BASE64
 # Optional env:
 #   USE_TUIST=true|false (default false)   CONFIGURATION (default Release)
 #   EXTRA_ARGS (extra xcodebuild settings; word-split intentionally — unquoted)
 #   PRE_BUILD_SCRIPT (bash script run in `setup`; CI also runs it as a native step)
 #   POST_BUILD_SCRIPT (bash script run in `post-build`, called with the archived
 #                     .app as $1; CI also runs it as a native step)
-#   HAS_FINDER / HAS_QUICKLOOK = true|false (+ BUNDLE_ID_FINDER / BUNDLE_ID_QUICKLOOK
-#     and PROV_PROF_DEVID_FINDER_BASE64 / PROV_PROF_DEVID_QL_BASE64)
 #   SKIP_NOTARIZE / NO_DMG / KEEP  (non-empty = on; local fast-iteration knobs.
 #     CI leaves these unset → full run.)
 #
-# MUST stay in lockstep with `_build-direct.yml`'s step list. Load-bearing
+# MUST stay in lockstep with `_build-mac-direct.yml`'s step list. Load-bearing
 # details that must NOT drift: the `ditto … --norsrc --noextattr --noacl`
 # packaging flags (without them, __MACOSX/._* companion files break the embedded
 # Sparkle.framework signature → Gatekeeper rejection); MARKETING_VERSION /
@@ -75,8 +72,8 @@ set -euo pipefail
 USE_TUIST="${USE_TUIST:-false}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"
-HAS_FINDER="${HAS_FINDER:-false}"
-HAS_QUICKLOOK="${HAS_QUICKLOOK:-false}"
+# profiles.py sits next to this script in both callers (.shared-ci/ in CI).
+SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 banner() {
   echo ""
@@ -96,7 +93,7 @@ compute_paths() {
   # ~/Library/Developer/Xcode/DerivedData. That default location survives between
   # jobs on a self-hosted runner and leaks stale build products / module caches
   # into later builds; WORK_DIR is ephemeral (phase_cleanup wipes it every run,
-  # phase_setup re-cleans it up front), so every build starts cold like a fresh
+  # phase_profiles re-cleans it up front), so every build starts cold like a fresh
   # GitHub-hosted runner. Passed to xcodebuild via -derivedDataPath in setup +
   # archive. Dependency caches (SwiftPM/Tuist/model) live elsewhere and stay warm.
   DERIVED_DATA="$WORK_DIR/DerivedData"
@@ -104,34 +101,9 @@ compute_paths() {
   APP="$EXPORT_DIR/${PRODUCT_NAME}.app"
   DMG_PATH="$OUTPUT_DIR/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg"
   ZIP_PATH="$OUTPUT_DIR/${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip"
-  PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+  PROFILES="$WORK_DIR/profiles"
 
   mkdir -p "$WORK_DIR"
-}
-
-# Human-readable Name from a CMS-wrapped .provisionprofile — same extraction as
-# CI. Errors loudly (rather than returning empty) when the file isn't a valid
-# profile, which almost always means a bad/empty/placeholder base64 secret.
-profile_name() {
-  local n
-  n="$(security cms -D -i "$1" 2>/dev/null | plutil -extract Name raw - 2>/dev/null)" || true
-  if [ -z "$n" ]; then
-    echo "::error::Could not read a profile Name from '$1' — is the matching PROV_PROF_*_BASE64 a valid, complete base64 of a .provisionprofile?" >&2
-    return 1
-  fi
-  printf '%s\n' "$n"
-}
-
-# Read a profile Name that `signing` captured (pre-archive) into WORK_DIR. Used
-# by `export` instead of re-reading the profile file, which xcodebuild may have
-# renamed during archive.
-read_profile_name() {
-  local f="$WORK_DIR/.profile-name-$1"
-  if [ ! -s "$f" ]; then
-    echo "::error::No saved profile name for '$1' ($f). Did the 'signing' phase run before 'export'?" >&2
-    return 1
-  fi
-  cat "$f"
 }
 
 # Restore the keychain search list snapshotted during `signing`. No snapshot ⇒
@@ -153,14 +125,23 @@ restore_keychains() {
 }
 
 # ── Phases ───────────────────────────────────────────────────────────────────
-phase_setup() {
-  banner "Resolve dependencies"
+phase_profiles() {
+  banner "Provisioning profiles"
+  : "${ASC_KEY_ID:?}"; : "${ASC_ISSUER_ID:?}"; : "${ASC_KEY_BASE64:?}"
   # Start from a clean work dir. Self-hosted runners persist state between jobs;
   # WORK_DIR holds our ephemeral DerivedData (see compute_paths), so wiping it
   # here guarantees a cold, hosted-runner-equivalent build even if a prior run's
-  # phase_cleanup didn't execute (e.g. a hard-cancelled job). setup is always the
-  # first phase, so this never clobbers state written by later phases.
+  # phase_cleanup didn't execute (e.g. a hard-cancelled job). profiles is always
+  # the first phase, so this never clobbers state written by later phases.
   rm -rf "$WORK_DIR"; mkdir -p "$WORK_DIR"
+  # Every Developer ID profile the team has. Archive and export match them to
+  # the app and each extension by bundle ID, so no profile is named anywhere.
+  # Runs before any of the app's code does.
+  python3 "$SCRIPTS/profiles.py" fetch --type MAC_APP_DIRECT --out "$PROFILES" --install
+}
+
+phase_setup() {
+  banner "Resolve dependencies"
   if [ "$USE_TUIST" = "true" ]; then
     # Tuist via mise. The Homebrew tap (`brew tap tuist/tuist`) is broken upstream
     # — its cask carries an invalid `conflicts_with formula:` stanza that fails the
@@ -196,8 +177,6 @@ phase_setup() {
 phase_signing() {
   banner "Set up signing"
   : "${DEVELOPER_ID_P12_BASE64:?}"; : "${DEVELOPER_ID_PASSWORD:?}"; : "${KEYCHAIN_PASSWORD:?}"
-  : "${PROV_PROF_DEVID_BASE64:?}"
-  : "${ASC_KEY_ID:?}"; : "${ASC_KEY_BASE64:?}"
 
   # Snapshot the search list BEFORE touching it, so cleanup restores the machine
   # exactly (on CI that's just login.keychain; a dev Mac may have more).
@@ -229,38 +208,6 @@ phase_signing() {
   security list-keychains -d user -s build.keychain login.keychain
   rm -f "$WORK_DIR/certificate.p12"
 
-  # Provisioning profiles. Capture each profile's Name HERE (before archive) and
-  # persist it to WORK_DIR — `xcodebuild archive` renames the files under the
-  # Provisioning Profiles dir, so the pp-*.provisionprofile path may be gone by
-  # export time. The assignment (not an echo-inline) lets a failed, empty
-  # profile_name abort here with a clear message rather than later.
-  mkdir -p "$PROFILE_DIR"
-  local prof
-  echo "$PROV_PROF_DEVID_BASE64" | base64 --decode > "$PROFILE_DIR/pp-devid.provisionprofile"
-  prof="$(profile_name "$PROFILE_DIR/pp-devid.provisionprofile")"
-  printf '%s\n' "$prof" > "$WORK_DIR/.profile-name-main"
-  echo "Main profile: $prof"
-
-  if [ "$HAS_FINDER" = "true" ]; then
-    : "${PROV_PROF_DEVID_FINDER_BASE64:?has-finder-extension set but PROV_PROF_DEVID_FINDER_BASE64 missing}"
-    echo "$PROV_PROF_DEVID_FINDER_BASE64" | base64 --decode > "$PROFILE_DIR/pp-devid-finder.provisionprofile"
-    prof="$(profile_name "$PROFILE_DIR/pp-devid-finder.provisionprofile")"
-    printf '%s\n' "$prof" > "$WORK_DIR/.profile-name-finder"
-    echo "Finder profile: $prof"
-  fi
-  if [ "$HAS_QUICKLOOK" = "true" ]; then
-    : "${PROV_PROF_DEVID_QL_BASE64:?has-quicklook-extension set but PROV_PROF_DEVID_QL_BASE64 missing}"
-    echo "$PROV_PROF_DEVID_QL_BASE64" | base64 --decode > "$PROFILE_DIR/pp-devid-quicklook.provisionprofile"
-    prof="$(profile_name "$PROFILE_DIR/pp-devid-quicklook.provisionprofile")"
-    printf '%s\n' "$prof" > "$WORK_DIR/.profile-name-quicklook"
-    echo "Quick Look profile: $prof"
-  fi
-
-  # App Store Connect API key for notarytool.
-  mkdir -p "$HOME/.appstoreconnect/private_keys"
-  echo "$ASC_KEY_BASE64" | base64 --decode \
-    > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-
   security find-identity -v -p codesigning build.keychain
 }
 
@@ -268,6 +215,12 @@ phase_archive() {
   banner "Archive"
   : "${SCHEME_NAME:?}"; : "${VERSION:?}"; : "${BUILD_NUMBER:?}"
   rm -rf "$ARCHIVE"
+  # Each target signs with the profile for its own bundle ID (see profiles.py
+  # archive-args). Read line by line: a setting may contain spaces.
+  local sign=() a
+  while IFS= read -r a; do sign+=("$a"); done < <(python3 "$SCRIPTS/profiles.py" archive-args \
+    --profiles "$PROFILES/profiles.json" --type MAC_APP_DIRECT --cert "Developer ID Application")
+  [ "${#sign[@]}" -gt 0 ] || { echo "::error::no signing settings — did the 'profiles' phase run?" >&2; exit 1; }
   # EXTRA_ARGS is intentionally UNQUOTED so it word-splits into separate
   # xcodebuild build-setting args (e.g. BUILD_RELEASE_DATE=...). Do not quote.
   xcodebuild archive \
@@ -276,6 +229,7 @@ phase_archive() {
     -archivePath "$ARCHIVE" \
     -derivedDataPath "$DERIVED_DATA" \
     -destination "generic/platform=macOS" \
+    "${sign[@]}" \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     $EXTRA_ARGS
@@ -285,7 +239,7 @@ phase_post_build() {
   # Opt-in hook so an app can inspect what it just built (architecture slices,
   # bundle contents, entitlements). Deliberately runs against the .app inside
   # the ARCHIVE rather than the exported one: it is the only artifact both
-  # channels share (_build-app-store.yml exports a .pkg), so a caller's script
+  # channels share (_build-mac-store.yml exports a .pkg), so a caller's script
   # never has to branch on which channel invoked it — and it fails here, before
   # notarization and export, which are the slow network-bound steps.
   [ -n "${POST_BUILD_SCRIPT:-}" ] || { echo "No POST_BUILD_SCRIPT set - skipping."; return 0; }
@@ -301,44 +255,12 @@ phase_post_build() {
 
 phase_export() {
   banner "Export"
-  : "${BUNDLE_ID:?}"
-
-  # Names captured by `signing` before archive (the profile files may have been
-  # renamed by xcodebuild since); the installed profiles are still matched by Name.
-  local profiles_xml
-  profiles_xml="<key>${BUNDLE_ID}</key><string>$(read_profile_name main)</string>"
-  if [ "$HAS_FINDER" = "true" ]; then
-    : "${BUNDLE_ID_FINDER:?}"
-    profiles_xml="${profiles_xml}<key>${BUNDLE_ID_FINDER}</key><string>$(read_profile_name finder)</string>"
-  fi
-  if [ "$HAS_QUICKLOOK" = "true" ]; then
-    : "${BUNDLE_ID_QUICKLOOK:?}"
-    profiles_xml="${profiles_xml}<key>${BUNDLE_ID_QUICKLOOK}</key><string>$(read_profile_name quicklook)</string>"
-  fi
-
-  # Unquoted PLIST delimiter so ${profiles_xml} expands. Closing delimiter must
-  # stay at column 0.
-  cat > "$WORK_DIR/ExportOptions.plist" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>developer-id</string>
-  <key>signingStyle</key>
-  <string>manual</string>
-  <key>provisioningProfiles</key>
-  <dict>
-    ${profiles_xml}
-  </dict>
-</dict>
-</plist>
-PLIST
-
-  # Surfaced so a bundle-id ↔ profile mismatch is obvious in the log (not secret —
-  # just bundle ids + profile names).
-  echo "Exporting with BUNDLE_ID='${BUNDLE_ID}' and ExportOptions.plist:"
-  cat "$WORK_DIR/ExportOptions.plist"
+  # Every app and extension in the archive gets the profile for its bundle ID.
+  # Printed so a bundle-id ↔ profile mismatch is obvious in the log (not secret —
+  # just bundle ids and profile names).
+  python3 "$SCRIPTS/profiles.py" export-options --profiles "$PROFILES/profiles.json" \
+    --type MAC_APP_DIRECT --archive "$ARCHIVE" --method developer-id \
+    --cert "Developer ID Application" --out "$WORK_DIR/ExportOptions.plist"
 
   rm -rf "$EXPORT_DIR"
   xcodebuild -exportArchive \
@@ -349,10 +271,12 @@ PLIST
 
 phase_notarize() {
   banner "Notarize"
-  : "${ASC_KEY_ID:?}"; : "${ASC_ISSUER_ID:?}"
-  local key="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+  : "${ASC_KEY_ID:?}"; : "${ASC_ISSUER_ID:?}"; : "${ASC_KEY_BASE64:?}"
+  # The key is on disk only for this phase; WORK_DIR goes in cleanup regardless.
+  local key="$WORK_DIR/AuthKey_${ASC_KEY_ID}.p8"
 
   ditto -c -k --keepParent "$APP" "$WORK_DIR/notarize.zip"
+  (umask 077; echo "$ASC_KEY_BASE64" | base64 --decode > "$key")
 
   # `|| true` so a non-zero notarytool exit still lets us parse the status and
   # fetch the rejection log below, instead of dying silently at the assignment.
@@ -373,9 +297,10 @@ phase_notarize() {
       --key "$key" \
       --key-id "$ASC_KEY_ID" \
       --issuer "$ASC_ISSUER_ID" || true
+    rm -f "$key"
     exit 1
   fi
-  rm -f "$WORK_DIR/notarize.zip"
+  rm -f "$key" "$WORK_DIR/notarize.zip"
 }
 
 phase_staple() {
@@ -462,12 +387,7 @@ phase_verify_packages() {
 phase_cleanup() {
   banner "Cleanup"
   security delete-keychain build.keychain 2>/dev/null || true
-  rm -f "$PROFILE_DIR/pp-devid.provisionprofile"
-  rm -f "$PROFILE_DIR/pp-devid-finder.provisionprofile"
-  rm -f "$PROFILE_DIR/pp-devid-quicklook.provisionprofile"
-  if [ -n "${ASC_KEY_ID:-}" ]; then
-    rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-  fi
+  python3 "$SCRIPTS/profiles.py" cleanup --out "$PROFILES" || true
   restore_keychains
   [ -n "${KEEP:-}" ] || rm -rf "$WORK_DIR"
 }
@@ -488,11 +408,11 @@ Usage:
   build-direct.sh <phase>    Run a single phase (CI runs one per workflow step)
   build-direct.sh all        Run every phase in order (local); traps cleanup
 
-Phases: setup signing archive export notarize staple verify package
-        verify-packages cleanup
+Phases: profiles setup signing archive post-build export notarize staple
+        verify package verify-packages cleanup
 
 Driven entirely by environment variables — see the header of this file, or
-scripts/build-local.sh for the local wrapper. CI sets them in _build-direct.yml.
+scripts/build-local.sh for the local wrapper. CI sets them in _build-mac-direct.yml.
 USAGE
 }
 
@@ -503,6 +423,7 @@ case "$PHASE" in -h|--help|help) usage; exit 0 ;; esac
 compute_paths
 
 case "$PHASE" in
+  profiles)         phase_profiles ;;
   setup)            phase_setup ;;
   signing)          phase_signing ;;
   archive)          phase_archive ;;
@@ -516,6 +437,7 @@ case "$PHASE" in
   cleanup)          phase_cleanup ;;
   all)
     trap phase_cleanup EXIT
+    phase_profiles
     phase_setup
     phase_signing
     phase_archive

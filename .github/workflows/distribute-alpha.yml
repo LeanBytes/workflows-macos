@@ -1,41 +1,35 @@
 # ── Alpha (invite-only) Distribution Orchestrator ────────────────────────────
 # Called from a per-app shell triggered MANUALLY (workflow_dispatch), run against
-# a feature branch (e.g. a "3.0" / "v3" branch). Cuts a signed + notarized Direct
-# build and hands it out PRIVATELY — deliberately OFF the public machinery:
+# any branch (e.g. a "3.0" / "v3" branch). Builds every leg of one product, signed
+# like a real release, and hands it out PRIVATELY — off the public machinery:
 #
-#   * NO Sparkle appcast update      (invitees get the build by hand, not auto-update)
-#   * NO Changelog.json write/upload (the changelog/website are untouched)
-#   * NO GitHub Release object       (only an unlisted S3 URL + a git tag)
+#   * App Store legs → TestFlight, marked internal-only: App Store Connect keeps
+#     the build from external testers and the App Store. Internal groups with
+#     automatic distribution get it like any other build.
+#   * Direct and Ad Hoc legs → an UNLISTED `alpha/<label>/` S3 prefix, handed
+#     out by link. No Sparkle appcast, no Changelog.json, no GitHub Release.
+#   * A product with a Direct leg pushes `<prefix><base>-alpha.<N>`: the tag pins
+#     the exact commit handed out and is the next run's counter. Without a
+#     Direct leg there is no tag — a tag marks a build that reaches customers on
+#     its own.
 #
-# The artifact is built byte-for-byte like a real release (Developer ID signed,
-# notarytool-notarized, stapled) so it runs cleanly on an invitee's Mac — only
-# the DISTRIBUTION is private.
-#
-# Identity + base version: pass **`product-id`** to source both from
-# `Config/products/<id>.json` (the v0.4.0 source of truth) — its
-# `changelog.versions[0].version` is the base, its scheme/bundle-id/etc. drive
-# the build, and the tag is **`<id>-v<base>-alpha.<N>`**. For a repo without
-# product files, pass `scheme`/`bundle-id`/`product-name` directly instead and
-# the tag is the legacy `v<base>-alpha.<N>`.
-#   * <base> may be overridden with `version-base`.
-#   * <N> counts existing `<prefix><base>-alpha.*` tags — the tag IS the durable
-#     record + next-run counter and pins the exact commit handed out.
+# `product-id` picks the product (optional when the repo has only one); the base
+# version is its `changelog.versions[0].version`, or `version-base`. The base
+# must be unreleased.
 #
 # IMPORTANT — the alpha tag must NOT fire the release flow. Your per-app
-# distribute-release.yml tag filter must exclude `!*-v*-alpha.*` (it already
+# distribute-release.yml tag filter must exclude `!*-alpha.*` (it already
 # excludes betas), or the tag push triggers a real release.
 #
-# Per-app shell example:
+# Per-app shell (the full one is examples/per-app/distribute-alpha.yml):
 #
 #   on:
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.5.9
-#       with:
-#         product-id: main          # sources identity + base from Config/products/main.json
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.0
 #       secrets:
-#         # … Direct subset only (no Sparkle key, no App Store secrets)
+#         # … the same block as distribute.yml, minus Sparkle and Jira
 # ─────────────────────────────────────────────────────────────────────────────
 name: distribute-alpha
 
@@ -43,45 +37,15 @@ on:
   workflow_call:
     inputs:
       product-id:
-        description: "Product id → sources identity + base version from Config/products/<id>.json, tags <id>-v<base>-alpha.N. Empty = use the scheme/bundle-id/product-name inputs (legacy v<base>-alpha.N)."
+        description: "The product (Config/products/<id>.json) to build. May stay empty when the repo has one product."
         type: string
         default: ""
       products-dir:
-        description: "Directory of per-product Config/products/<id>.json files (used with product-id)."
+        description: "Directory of per-product Config/products/<id>.json files."
         type: string
         default: "Config/products"
       version-base:
-        description: "Base version for the alpha (e.g. '3.0.0'). Empty = the product file's (or Changelog.json's) versions[0].version."
-        type: string
-        default: ""
-      changelog-path:
-        description: "Path to Changelog.json (read-only — only used to derive the base version when product-id AND version-base are both empty)."
-        type: string
-        default: "Config/Changelog.json"
-
-      # ── Product identity (used only when product-id is empty) ──────────────
-      scheme:
-        description: "Xcode scheme to archive (when product-id is empty)."
-        type: string
-        default: ""
-      bundle-id:
-        description: "App bundle identifier (when product-id is empty)."
-        type: string
-        default: ""
-      product-name:
-        description: "Product name — drives the .app name and DMG/ZIP filenames (when product-id is empty)."
-        type: string
-        default: ""
-      bundle-id-finder:
-        description: "Finder extension bundle id (only when has-finder-extension)."
-        type: string
-        default: ""
-      bundle-id-quicklook:
-        description: "Quick Look extension bundle id (only when has-quicklook-extension)."
-        type: string
-        default: ""
-      s3-subpath:
-        description: "S3 sub-prefix (when product-id is empty; a product file supplies its own). Uploads to <dist>/<subpath>/alpha/<version>/."
+        description: "Base version for the alpha (e.g. '3.0.0'). Empty = the product file's changelog.versions[0].version."
         type: string
         default: ""
 
@@ -94,7 +58,7 @@ on:
         type: boolean
         default: false
       artifact-retention-days:
-        description: "Days to keep the uploaded Direct build artifact (default 7). Raise it per app if you need longer for debugging."
+        description: "Days to keep the uploaded build artifacts in a private repo (default 7; a public repo keeps them one day)."
         type: number
         default: 7
       pre-build-cache-path:
@@ -110,18 +74,6 @@ on:
         description: "Path of a bash script to run after the app is built, called with the built .app bundle as $1. Non-zero exits fail the job. Use it to inspect what was produced — architecture slices, bundle contents, entitlements."
         type: string
         default: ""
-      has-finder-extension:
-        description: "Finder extension (when product-id is empty; a product file supplies its own has-finder)."
-        type: boolean
-        default: false
-      has-quicklook-extension:
-        description: "Quick Look extension (when product-id is empty; a product file supplies its own has-quicklook)."
-        type: boolean
-        default: false
-      configuration-direct:
-        description: "Xcode build configuration for the Direct archive. Default 'Release'."
-        type: string
-        default: "Release"
       extra-xcodebuild-args:
         type: string
         default: ""
@@ -130,40 +82,44 @@ on:
         type: string
         default: '["self-hosted","macOS"]'
       build-timeout-minutes:
-        description: "Ceiling for each build job (Developer ID and App Store). Forwarded to the build callees."
+        description: "Ceiling for each build job. Forwarded to the build callees."
         type: number
         default: 60
-
       archive-timeout-minutes:
         description: "Ceiling for the Archive step inside each build job. Must stay under build-timeout-minutes."
         type: number
         default: 30
-
-      runs-on-build-direct:
-        description: "Runner for the Developer ID (direct) archive."
+      runs-on-build-ios:
+        description: "Runner for the iPhone and iPad archive."
+        type: string
+        default: '["self-hosted","macOS"]'
+      runs-on-build-mac-store:
+        description: "Runner for the Mac App Store archive."
+        type: string
+        default: '["self-hosted","macOS"]'
+      runs-on-build-mac-direct:
+        description: "Runner for the Developer ID (Direct) archive."
         type: string
         default: '["self-hosted","macOS"]'
       runs-on-publish:
-        description: "Publish job runner. Ubuntu is fine (only AWS CLI + git tag push), but defaults to macOS for parity."
+        description: "Publish job runner (altool + AWS CLI + a git tag push)."
         type: string
         default: '["self-hosted","macOS"]'
 
-    # Direct subset only — no Sparkle key, no App Store certs/profiles.
     secrets:
+      APPLE_DISTR_P12_BASE64:         { required: false }
+      APPLE_DISTR_PASSWORD:           { required: false }
+      MAC_DISTR_P12_BASE64:           { required: false }
+      MAC_DISTR_PASSWORD:             { required: false }
       DEVELOPER_ID_P12_BASE64:        { required: false }
       DEVELOPER_ID_PASSWORD:          { required: false }
-      KEYCHAIN_PASSWORD:              { required: false }
-      PROV_PROF_DEVID_BASE64:         { required: false }
-      PROV_PROF_DEVID_FINDER_BASE64:  { required: false }
-      PROV_PROF_DEVID_QL_BASE64:      { required: false }
-      # A product file may name its Developer ID profile secret via
-      # devid-profile-secret; unset falls back to PROV_PROF_DEVID_BASE64.
-      PROV_PROF_DEVID_PRO_BASE64:     { required: false }
-      # …and its Developer ID CERTIFICATE via devid-cert-secret /
-      # devid-cert-password-secret; unset falls back to DEVELOPER_ID_P12_BASE64 /
-      # DEVELOPER_ID_PASSWORD (e.g. a legacy team kept after an account transfer).
+      # A leg can sign with another certificate by naming these in
+      # "cert-secret" / "cert-password-secret"; unset falls back to the team's own.
+      APPLE_DISTR_P12_ALT_BASE64:     { required: false }
+      APPLE_DISTR_PASSWORD_ALT:       { required: false }
       DEVELOPER_ID_P12_ALT_BASE64:    { required: false }
       DEVELOPER_ID_PASSWORD_ALT:      { required: false }
+      KEYCHAIN_PASSWORD:              { required: false }
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
@@ -187,190 +143,280 @@ jobs:
     runs-on: ${{ vars.RUNS_ON_PREPARE || fromJSON(inputs.runs-on-prepare) }}
     timeout-minutes: 5
     outputs:
-      scheme: ${{ steps.compute.outputs.scheme }}
-      bundle-id: ${{ steps.compute.outputs.bundle-id }}
-      product-name: ${{ steps.compute.outputs.product-name }}
-      bundle-id-finder: ${{ steps.compute.outputs.bundle-id-finder }}
-      bundle-id-quicklook: ${{ steps.compute.outputs.bundle-id-quicklook }}
-      has-finder: ${{ steps.compute.outputs.has-finder }}
-      has-quicklook: ${{ steps.compute.outputs.has-quicklook }}
-      s3-subpath: ${{ steps.compute.outputs.s3-subpath }}
-      devid-secret: ${{ steps.compute.outputs.devid-secret }}
-      devid-cert-secret: ${{ steps.compute.outputs.devid-cert-secret }}
-      devid-cert-password-secret: ${{ steps.compute.outputs.devid-cert-password-secret }}
-      marketing: ${{ steps.compute.outputs.marketing }}
-      build-number: ${{ steps.compute.outputs.build-number }}
-      artifact-label: ${{ steps.compute.outputs.artifact-label }}
-      alpha-tag: ${{ steps.compute.outputs.alpha-tag }}
+      target-id: ${{ steps.plan.outputs.target-id }}
+      version: ${{ steps.plan.outputs.version }}
+      alpha-label: ${{ steps.plan.outputs.alpha-label }}
+      alpha-tag: ${{ steps.plan.outputs.alpha-tag }}
+      build-number: ${{ steps.plan.outputs.build-number }}
+      legs: ${{ steps.plan.outputs.legs }}
+      ios-legs: ${{ steps.plan.outputs.ios-legs }}
+      mac-store-legs: ${{ steps.plan.outputs.mac-store-legs }}
+      mac-direct-legs: ${{ steps.plan.outputs.mac-direct-legs }}
+      has-ios: ${{ steps.plan.outputs.has-ios }}
+      has-mac-store: ${{ steps.plan.outputs.has-mac-store }}
+      has-mac-direct: ${{ steps.plan.outputs.has-mac-direct }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # full tag history for the alpha counter + safeguard
+          fetch-depth: 0  # full tag history for the alpha counter + the released check
+          fetch-tags: true
 
-      - name: Resolve identity + compute alpha version
-        id: compute
-        shell: bash
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      - name: Plan the alpha
+        id: plan
         env:
-          PRODUCT_ID: ${{ inputs.product-id }}
           PRODUCTS_DIR: ${{ inputs.products-dir }}
-          CHANGELOG_PATH: ${{ inputs.changelog-path }}
+          PRODUCT_ID: ${{ inputs.product-id }}
           VERSION_BASE: ${{ inputs.version-base }}
-          IN_SCHEME: ${{ inputs.scheme }}
-          IN_BUNDLE_ID: ${{ inputs.bundle-id }}
-          IN_PRODUCT_NAME: ${{ inputs.product-name }}
-          IN_BUNDLE_ID_FINDER: ${{ inputs.bundle-id-finder }}
-          IN_BUNDLE_ID_QL: ${{ inputs.bundle-id-quicklook }}
-          IN_S3_SUBPATH: ${{ inputs.s3-subpath }}
-          IN_HAS_FINDER: ${{ inputs.has-finder-extension }}
-          IN_HAS_QL: ${{ inputs.has-quicklook-extension }}
-        run: |
-          set -euo pipefail
-          # Resolve identity + base: from Config/products/<id>.json when product-id
-          # is set, else from the direct inputs. shlex.quote keeps values safe.
-          eval "$(python3 - <<'PY'
-          import json, os, shlex
-          def sh(k, v): print(f'{k}={shlex.quote(str(v))}')
-          pid = os.environ.get("PRODUCT_ID", "").strip()
-          if pid:
-              p = json.load(open(f'{os.environ["PRODUCTS_DIR"]}/{pid}.json'))
-              base = os.environ.get("VERSION_BASE") or p["changelog"]["versions"][0]["version"]
-              sh("R_SCHEME", p.get("scheme") or p.get("scheme-store") or "")
-              sh("R_BUNDLE_ID", p.get("bundle-id", ""))
-              sh("R_PRODUCT_NAME", p.get("product-name", ""))
-              sh("R_BUNDLE_ID_FINDER", p.get("bundle-id-finder", ""))
-              sh("R_BUNDLE_ID_QL", p.get("bundle-id-quicklook", ""))
-              sh("R_S3_SUBPATH", (p.get("s3-subpath") or "").strip("/"))
-              sh("R_HAS_FINDER", "true" if p.get("has-finder") else "false")
-              sh("R_HAS_QL", "true" if p.get("has-quicklook") else "false")
-              sh("R_DEVID_SECRET", p.get("devid-profile-secret", ""))
-              sh("R_DEVID_CERT_SECRET", p.get("devid-cert-secret", ""))
-              sh("R_DEVID_CERT_PW_SECRET", p.get("devid-cert-password-secret", ""))
-              # Bare 'v' when the product omits 'id' (primary), '<id>-v' otherwise.
-              file_id = str(p.get("id") or "").strip()
-              sh("R_PREFIX", f"{file_id}-v" if file_id else "v")
-              sh("R_BASE", base)
-          else:
-              base = os.environ.get("VERSION_BASE", "")
-              if not base:
-                  d = json.load(open(os.environ["CHANGELOG_PATH"]))
-                  vs = d.get("versions") or []
-                  base = vs[0].get("version", "") if vs else ""
-              sh("R_SCHEME", os.environ.get("IN_SCHEME", ""))
-              sh("R_BUNDLE_ID", os.environ.get("IN_BUNDLE_ID", ""))
-              sh("R_PRODUCT_NAME", os.environ.get("IN_PRODUCT_NAME", ""))
-              sh("R_BUNDLE_ID_FINDER", os.environ.get("IN_BUNDLE_ID_FINDER", ""))
-              sh("R_BUNDLE_ID_QL", os.environ.get("IN_BUNDLE_ID_QL", ""))
-              sh("R_S3_SUBPATH", (os.environ.get("IN_S3_SUBPATH", "") or "").strip("/"))
-              sh("R_HAS_FINDER", os.environ.get("IN_HAS_FINDER", "false"))
-              sh("R_HAS_QL", os.environ.get("IN_HAS_QL", "false"))
-              sh("R_DEVID_SECRET", "")
-              sh("R_DEVID_CERT_SECRET", "")
-              sh("R_DEVID_CERT_PW_SECRET", "")
-              sh("R_PREFIX", "v")
-              sh("R_BASE", base)
-          PY
-          )"
+        run: python3 .shared-ci/.github/scripts/products.py plan-alpha >> "$GITHUB_OUTPUT"
 
-          [ -n "${R_SCHEME:-}" ] || { echo "::error::no scheme resolved — set product-id or the scheme input."; exit 1; }
-          [ -n "${R_BASE:-}" ]   || { echo "::error::no base version resolved — set product-id, version-base, or a valid Changelog.json."; exit 1; }
+      - name: Show the alpha
+        run: echo "Alpha ${{ steps.plan.outputs.alpha-label }} of '${{ steps.plan.outputs.target-id }}' (build ${{ steps.plan.outputs.build-number }}) — tag '${{ steps.plan.outputs.alpha-tag }}'"
 
-          # Safeguard (parity with beta): base must be UNreleased for this product.
-          if git rev-parse "refs/tags/${R_PREFIX}${R_BASE}" >/dev/null 2>&1; then
-            echo "::error::${R_PREFIX}${R_BASE} is already released — alphas are for an unreleased version. Bump the base first."
-            exit 1
-          fi
-
-          N=$(( $(git tag --list "${R_PREFIX}${R_BASE}-alpha.*" | wc -l | tr -d ' ') + 1 ))
-          BUILD_NUMBER=$(date -u +%y%m%d%H%M%S)
-          MARKETING="${R_BASE}-alpha.${N}"            # e.g. 3.0.0-alpha.1
-          ALPHA_TAG="${R_PREFIX}${R_BASE}-alpha.${N}"  # e.g. main-v3.0.0-alpha.1 or v3.0.0-alpha.1
-
-          {
-            echo "scheme=${R_SCHEME}"
-            echo "bundle-id=${R_BUNDLE_ID}"
-            echo "product-name=${R_PRODUCT_NAME}"
-            echo "bundle-id-finder=${R_BUNDLE_ID_FINDER}"
-            echo "bundle-id-quicklook=${R_BUNDLE_ID_QL}"
-            echo "has-finder=${R_HAS_FINDER}"
-            echo "has-quicklook=${R_HAS_QL}"
-            echo "s3-subpath=${R_S3_SUBPATH}"
-            echo "devid-secret=${R_DEVID_SECRET}"
-            echo "devid-cert-secret=${R_DEVID_CERT_SECRET}"
-            echo "devid-cert-password-secret=${R_DEVID_CERT_PW_SECRET}"
-            echo "marketing=${MARKETING}"
-            echo "build-number=${BUILD_NUMBER}"
-            echo "artifact-label=${MARKETING}"
-            echo "alpha-tag=${ALPHA_TAG}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Alpha prepared: ${ALPHA_TAG}  (scheme=${R_SCHEME}, build=${BUILD_NUMBER})"
-
-  build-direct:
+  build-ios:
+    if: needs.prepare.outputs.has-ios == 'true'
     needs: prepare
-    if: needs.prepare.result == 'success'
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-direct.yml@v0.5.9
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.prepare.outputs.ios-legs) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-ios.yml@v0.6.0
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
       archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
-      version: ${{ needs.prepare.outputs.marketing }}        # e.g. "3.0.0-alpha.1"
+      version: ${{ matrix.leg.marketing }}
       build-number: ${{ needs.prepare.outputs.build-number }}
-      artifact-label: ${{ needs.prepare.outputs.artifact-label }}
-      scheme-name: ${{ needs.prepare.outputs.scheme }}
-      bundle-id: ${{ needs.prepare.outputs.bundle-id }}
-      product-name: ${{ needs.prepare.outputs.product-name }}
-      bundle-id-finder: ${{ needs.prepare.outputs.bundle-id-finder }}
-      bundle-id-quicklook: ${{ needs.prepare.outputs.bundle-id-quicklook }}
+      artifact-name: ios-build-${{ matrix.leg.leg }}
+      scheme: ${{ matrix.leg.scheme }}
+      configuration: ${{ matrix.leg.configuration }}
+      profile-type: ${{ matrix.leg.profile-type }}
+      export-method: ${{ matrix.leg.export-method }}
+      internal-only: ${{ matrix.leg.internal-only }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
       pre-build-script: ${{ inputs.pre-build-script }}
-      has-finder-extension: ${{ needs.prepare.outputs.has-finder == 'true' }}
-      has-quicklook-extension: ${{ needs.prepare.outputs.has-quicklook == 'true' }}
-      runs-on: ${{ inputs.runs-on-build-direct }}
+      runs-on: ${{ inputs.runs-on-build-ios }}
       extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
-      configuration: ${{ inputs.configuration-direct }}
       lfs: ${{ inputs.lfs }}
       artifact-retention-days: ${{ inputs.artifact-retention-days }}
     secrets:
-      DEVELOPER_ID_P12_BASE64:        ${{ needs.prepare.outputs.devid-cert-secret != '' && secrets[needs.prepare.outputs.devid-cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
-      DEVELOPER_ID_PASSWORD:          ${{ needs.prepare.outputs.devid-cert-password-secret != '' && secrets[needs.prepare.outputs.devid-cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
-      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64:         ${{ needs.prepare.outputs.devid-secret != '' && secrets[needs.prepare.outputs.devid-secret] || secrets.PROV_PROF_DEVID_BASE64 }}
-      PROV_PROF_DEVID_FINDER_BASE64:  ${{ secrets.PROV_PROF_DEVID_FINDER_BASE64 }}
-      PROV_PROF_DEVID_QL_BASE64:      ${{ secrets.PROV_PROF_DEVID_QL_BASE64 }}
-      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
-      SHARED_WORKFLOWS_TOKEN:         ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+      APPLE_DISTR_P12_BASE64:  ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.APPLE_DISTR_P12_BASE64 }}
+      APPLE_DISTR_PASSWORD:    ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.APPLE_DISTR_PASSWORD }}
+      KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
+      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+
+  build-mac-store:
+    if: needs.prepare.outputs.has-mac-store == 'true'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.prepare.outputs.mac-store-legs) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-store.yml@v0.6.0
+    with:
+      post-build-script: ${{ inputs.post-build-script }}
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
+      version: ${{ matrix.leg.marketing }}
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-name: mac-store-build-${{ matrix.leg.leg }}
+      scheme: ${{ matrix.leg.scheme }}
+      configuration: ${{ matrix.leg.configuration }}
+      internal-only: ${{ matrix.leg.internal-only }}
+      use-tuist: ${{ inputs.use-tuist }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      runs-on: ${{ inputs.runs-on-build-mac-store }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+    secrets:
+      APPLE_DISTR_P12_BASE64:  ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.APPLE_DISTR_P12_BASE64 }}
+      APPLE_DISTR_PASSWORD:    ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.APPLE_DISTR_PASSWORD }}
+      MAC_DISTR_P12_BASE64:    ${{ secrets.MAC_DISTR_P12_BASE64 }}
+      MAC_DISTR_PASSWORD:      ${{ secrets.MAC_DISTR_PASSWORD }}
+      KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
+      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
+
+  build-mac-direct:
+    if: needs.prepare.outputs.has-mac-direct == 'true'
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.prepare.outputs.mac-direct-legs) }}
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.0
+    with:
+      post-build-script: ${{ inputs.post-build-script }}
+      job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
+      archive-timeout-minutes: ${{ inputs.archive-timeout-minutes }}
+      version: ${{ matrix.leg.marketing }}                 # e.g. "3.0.0-alpha.1"
+      build-number: ${{ needs.prepare.outputs.build-number }}
+      artifact-label: ${{ matrix.leg.artifact-label }}
+      artifact-name: mac-direct-build-${{ matrix.leg.leg }}
+      scheme-name: ${{ matrix.leg.scheme }}
+      product-name: ${{ matrix.leg.product-name }}
+      configuration: ${{ matrix.leg.configuration }}
+      use-tuist: ${{ inputs.use-tuist }}
+      pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
+      pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
+      pre-build-script: ${{ inputs.pre-build-script }}
+      runs-on: ${{ inputs.runs-on-build-mac-direct }}
+      extra-xcodebuild-args: ${{ inputs.extra-xcodebuild-args }}
+      lfs: ${{ inputs.lfs }}
+      artifact-retention-days: ${{ inputs.artifact-retention-days }}
+    secrets:
+      DEVELOPER_ID_P12_BASE64: ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
+      DEVELOPER_ID_PASSWORD:   ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
+      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   publish-alpha:
-    needs: [prepare, build-direct]
-    if: needs.build-direct.result == 'success'
+    needs: [prepare, build-ios, build-mac-store, build-mac-direct]
+    # 'skipped' stays permitted (a product without a leg of some kind); a failed
+    # or cancelled build must not hand out half an alpha (see #10).
+    if: |
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.build-ios.result != 'failure' && needs.build-ios.result != 'cancelled' &&
+      needs.build-mac-store.result != 'failure' && needs.build-mac-store.result != 'cancelled' &&
+      needs.build-mac-direct.result != 'failure' && needs.build-mac-direct.result != 'cancelled' &&
+      (needs.build-ios.result == 'success' || needs.build-mac-store.result == 'success' || needs.build-mac-direct.result == 'success')
     # `vars.RUNS_ON_PUBLISH` overrides this with no commit — see README, "Moving a job
     # off the self-hosted Mac". Unset is '' (falsy), so the input is the default.
     runs-on: ${{ vars.RUNS_ON_PUBLISH || fromJSON(inputs.runs-on-publish) }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
-      MARKETING: ${{ needs.prepare.outputs.marketing }}
-      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
-      ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact-label }}
+      LABEL: ${{ needs.prepare.outputs.alpha-label }}
       ALPHA_TAG: ${{ needs.prepare.outputs.alpha-tag }}
-      S3_SUBPATH: ${{ needs.prepare.outputs.s3-subpath }}
+      BUILD_NUMBER: ${{ needs.prepare.outputs.build-number }}
+      LEGS_JSON: ${{ needs.prepare.outputs.legs }}
     steps:
       - name: Checkout caller repo
         uses: actions/checkout@v6
         with:
           fetch-depth: 0  # need the branch ref to push the tag
 
-      - name: Download direct-build artifact
+      - name: Checkout shared scripts
+        uses: actions/checkout@v6
+        with:
+          repository: LeanBytes/workflows-macos
+          ref: ${{ github.job_workflow_sha }}
+          path: .shared-ci
+          token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
+
+      - name: Download ios-build artifacts
+        if: needs.build-ios.result == 'success'
         uses: actions/download-artifact@v8
         with:
-          name: direct-build
-          path: ./artifacts/direct
+          pattern: ios-build-*
+          path: ./artifacts/ios
+
+      - name: Download mac-store-build artifacts
+        if: needs.build-mac-store.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: mac-store-build-*
+          path: ./artifacts/mac-store
+
+      - name: Download mac-direct-build artifacts
+        if: needs.build-mac-direct.result == 'success'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: mac-direct-build-*
+          path: ./artifacts/mac-direct
+
+      # \x1f-delimited, NOT tab — tab is IFS-whitespace and `read` would
+      # collapse an empty s3-subpath, shifting every later column.
+      #   legs.tsv: leg id pname plat chan dist bid sub kind
+      - name: Expand legs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$LEGS_JSON" > /tmp/legs.tsv <<'PY'
+          import json, sys
+          KIND = {("ios", "app-store"): "ios", ("ios", "ad-hoc"): "ios",
+                  ("macos", "app-store"): "mac-store", ("macos", "direct"): "mac-direct"}
+          fields = ["leg", "id", "product-name", "platform", "channel", "distribute", "bundle-id", "s3-subpath"]
+          for l in json.loads(sys.argv[1]):
+              print("\x1f".join([str(l.get(k, "")) for k in fields] + [KIND[(l["platform"], l["channel"])]]))
+          PY
+          echo "Legs:"; tr '\037' '\t' < /tmp/legs.tsv
+
+      - name: Normalize artifact layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A LONE matched artifact is extracted flat into the base path; re-nest
+          # it so the per-leg globs below can assume artifacts/<kind>/<kind>-build-<leg>/.
+          while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub kind; do
+            base="./artifacts/$kind"; want="$base/$kind-build-$leg"
+            if [ -d "$base" ] && [ ! -d "$want" ] && [ -n "$(find "$base" -maxdepth 1 -type f 2>/dev/null)" ]; then
+              mkdir -p "$want"
+              find "$base" -maxdepth 1 -type f -exec mv {} "$want"/ \;
+              echo "re-nested flattened $kind artifact → $want/"
+            fi
+          done < /tmp/legs.tsv
+
+      # Exported internal-only (testFlightInternalTestingOnly), so App Store
+      # Connect keeps it from external testers and the App Store.
+      - name: Upload to TestFlight, internal only (per app-store leg)
+        if: needs.build-ios.result == 'success' || needs.build-mac-store.result == 'success'
+        shell: bash
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+        run: |
+          set -uo pipefail
+          source .shared-ci/.github/scripts/classify-upload.sh
+          # altool reads the key from here; Cleanup removes it.
+          mkdir -p ~/.appstoreconnect/private_keys
+          (umask 077; echo "$ASC_KEY_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8)
+          while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub kind; do
+            [ "$chan" = "app-store" ] || continue
+            [ "$dist" = "True" ] || { echo "leg $leg: distribute=false — skipping upload"; continue; }
+            echo "::group::TestFlight upload — $leg"
+            if [ "$plat" = "ios" ]; then ext=ipa; type=ios; else ext=pkg; type=macos; fi
+            FILE=$(ls ./artifacts/$kind/$kind-build-$leg/*.$ext 2>/dev/null | head -1 || true)
+            if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+              echo "::error::No .$ext for leg $leg"; echo "::endgroup::"; exit 1
+            fi
+            set +e
+            OUTPUT=$(xcrun altool --upload-app --type "$type" --file "$FILE" \
+              --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1)
+            RC=$?
+            set -e
+            echo "$OUTPUT"
+            case "$(classify_upload "$RC" "$OUTPUT")" in
+              accepted)        echo "TestFlight upload accepted for $leg"; echo "::endgroup::"; continue ;;
+              already-present) echo "Build for $leg already present — treating as success."; echo "::endgroup::"; continue ;;
+            esac
+            echo "::error::altool failed for $leg (exit ${RC})"; echo "::endgroup::"; exit 1
+          done < /tmp/legs.tsv
 
       - name: Install AWS CLI
+        if: needs.build-mac-direct.result == 'success' || contains(needs.prepare.outputs.ios-legs, '"channel":"ad-hoc"')
         shell: bash
         run: |
           set -euo pipefail
@@ -381,27 +427,48 @@ jobs:
           fi
           aws --version
 
-      # Upload to an UNLISTED `alpha/<version>/` prefix — hand-out-the-URL only.
-      - name: Upload DMG + ZIP to S3 (unlisted alpha prefix)
+      # Upload to an UNLISTED `alpha/<label>/` prefix — hand-out-the-URL only.
+      - name: Upload to S3 (unlisted alpha prefix, Direct + Ad Hoc)
+        if: needs.build-mac-direct.result == 'success' || contains(needs.prepare.outputs.ios-legs, '"channel":"ad-hoc"')
         shell: bash
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: "eu-central-1"
           S3_DISTRIBUTION_PATH: ${{ vars.S3_DISTRIBUTION_PATH }}
+          S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
         run: |
           set -euo pipefail
-          DEST="${S3_DISTRIBUTION_PATH}${S3_SUBPATH:+/$S3_SUBPATH}/alpha/${MARKETING}"
-          for f in ./artifacts/direct/*.dmg ./artifacts/direct/*.zip; do
-            [ -e "$f" ] || continue
-            BASENAME=$(basename "$f")
-            aws s3 cp "$f" "${DEST}/${BASENAME}"
-            echo "Uploaded ${BASENAME} → ${DEST}/"
-          done
+          while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub kind; do
+            case "$chan" in
+              direct)
+                DEST="${S3_DISTRIBUTION_PATH}${sub:+/$sub}/alpha/${LABEL}"
+                for f in ./artifacts/mac-direct/mac-direct-build-$leg/*.dmg ./artifacts/mac-direct/mac-direct-build-$leg/*.zip; do
+                  [ -e "$f" ] || continue
+                  aws s3 cp "$f" "${DEST}/$(basename "$f")"
+                  echo "Uploaded $(basename "$f") → ${DEST}/"
+                done ;;
+              ad-hoc)
+                [ "$dist" = "True" ] || { echo "leg $leg: distribute=false — no S3 upload"; continue; }
+                IPA=$(ls ./artifacts/ios/ios-build-$leg/*.ipa 2>/dev/null | head -1 || true)
+                [ -n "$IPA" ] || { echo "::error::No .ipa for leg $leg"; exit 1; }
+                DEST="${S3_DISTRIBUTION_PATH%/}/${bid}/alpha/${LABEL}"
+                BASE="${S3_DOWNLOAD_URL%/}/${bid}/alpha/${LABEL}"
+                .shared-ci/.github/scripts/manifest.sh \
+                  "${BASE}/app.ipa" "$bid" "$BUILD_NUMBER" "$pname ${LABEL}" > "/tmp/manifest-$leg.plist"
+                plutil -lint "/tmp/manifest-$leg.plist"
+                aws s3 cp "$IPA" "${DEST}/app.ipa" --content-type "application/octet-stream"
+                # text/xml is required: with S3's default application/octet-stream,
+                # iOS downloads the manifest but refuses to read it.
+                aws s3 cp "/tmp/manifest-$leg.plist" "${DEST}/manifest.plist" --content-type "text/xml"
+                echo "Install link: itms-services://?action=download-manifest&url=${BASE}/manifest.plist" ;;
+            esac
+          done < /tmp/legs.tsv
 
       # The tag is the durable record + counter source. It does NOT create a GH
-      # Release. (Your distribute-release.yml MUST exclude `*-v*-alpha.*`.)
+      # Release. (Your distribute-release.yml MUST exclude `*-alpha.*`.)
       - name: Push alpha tag
+        if: env.ALPHA_TAG != ''
         shell: bash
         run: |
           set -euo pipefail
@@ -414,21 +481,34 @@ jobs:
       - name: Write alpha build summary
         shell: bash
         env:
-          PRODUCT_NAME: ${{ needs.prepare.outputs.product-name }}
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
         run: |
-          BASE_URL="${S3_DOWNLOAD_URL}${S3_SUBPATH:+/$S3_SUBPATH}/alpha/${MARKETING}"
           {
             echo "## Alpha build ready 🧪"
             echo
-            echo "Private invite build — **not** published to the appcast, the changelog, or GitHub Releases."
+            echo "Private build — **not** on the appcast, in the changelog, in a GitHub Release, or available to external testers."
             echo
-            echo "**Version:** \`${MARKETING}\` · **Build:** \`${BUILD_NUMBER}\` · **Tag:** \`${ALPHA_TAG}\` · **Commit:** \`${GITHUB_SHA}\`"
+            echo "**Version:** \`${LABEL}\` · **Build:** \`${BUILD_NUMBER}\` · **Tag:** \`${ALPHA_TAG:-none}\` · **Commit:** \`${GITHUB_SHA}\`"
             echo
-            echo "Hand this link to invited testers (notarized — opens without Gatekeeper warnings):"
-            echo
-            echo "| Artifact | Download |"
-            echo "|---|---|"
-            echo "| DMG | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg](${BASE_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.dmg) |"
-            echo "| ZIP | [${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip](${BASE_URL}/${PRODUCT_NAME}_${ARTIFACT_LABEL}.zip) |"
+            echo "| Product | Platform | Where |"
+            echo "|---|---|---|"
+            while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub kind; do
+              case "$chan" in
+                direct)
+                  BASE="${S3_DOWNLOAD_URL}${sub:+/$sub}/alpha/${LABEL}"
+                  where="[DMG](${BASE}/${pname}_${LABEL}.dmg) · [ZIP](${BASE}/${pname}_${LABEL}.zip)" ;;
+                ad-hoc)
+                  where="itms-services://?action=download-manifest&url=${S3_DOWNLOAD_URL%/}/${bid}/alpha/${LABEL}/manifest.plist" ;;
+                *)
+                  where="TestFlight, internal testers only" ;;
+              esac
+              echo "| ${pname} | ${plat} | ${where} |"
+            done < /tmp/legs.tsv
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          rm -f /tmp/legs.tsv /tmp/manifest-*.plist
+          rm -f ~/.appstoreconnect/private_keys/AuthKey_*.p8

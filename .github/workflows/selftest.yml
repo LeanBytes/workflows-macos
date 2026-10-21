@@ -1,8 +1,9 @@
 name: selftest
 
 # CI for workflows-macos itself (the repo has no other self-CI): lint every
-# workflow and run the products.py offline suite whenever .github/** or tests/**
-# change. The `job_workflow_sha` context and shellcheck style findings are
+# workflow and run the offline suite (products.py, profiles.py, the wiring of
+# every workflow call, examples included) whenever .github/**, examples/** or
+# tests/** change. The `job_workflow_sha` context and shellcheck style findings are
 # ignored (the former is an actionlint gap; the latter are the intentional
 # "read all TSV columns, use a subset" publish loops).
 
@@ -10,11 +11,13 @@ on:
   pull_request:
     paths:
       - '.github/**'
+      - 'examples/**'
       - 'tests/**'
   push:
     branches: [main]
     paths:
       - '.github/**'
+      - 'examples/**'
       - 'tests/**'
 
 permissions:
@@ -49,5 +52,6 @@ jobs:
             -ignore 'shellcheck reported issue' \
             .github/workflows/*.yml
 
-      - name: products.py offline tests
+      # Needs python3, git, openssl and yq — all on ubuntu-latest.
+      - name: Offline tests
         run: bash tests/run.sh

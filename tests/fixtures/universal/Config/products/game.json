@@ -1,0 +1,11 @@
+{
+  "product-name": "Circle Game",
+  "scheme": "Game",
+  "bundle-id": "com.example.game",
+  "platforms": {
+    "ios": { "app-store": {} },
+    "macos": { "app-store": { "scheme": "GameMac" } }
+  },
+  "source-paths": ["Sources/**"],
+  "changelog": { "versions": [ { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "First" } } ] } ] }
+}

@@ -1,17 +1,20 @@
 {
   "id": "app",
-  "platform": "macos",
-  "scheme": "MyApp",
   "product-name": "MyApp",
+  "scheme": "MyApp",
   "bundle-id": "com.example.myapp",
-  "scheme-store": "MyApp",
-  "build-app-store": true,
-  "distribute-app-store": true,
-  "distribute-appcast": true,
-  "_comment-source-paths": "KEEP THIS. Without it a beta cuts only when this file is edited, so a code-only fix merges to main and ships nothing, green. See README section 2a.",
+  "_comment-platforms": "Where each platform ships. A leg's object holds only what differs from the product: scheme, bundle-id, configuration, product-name; the direct leg also takes the S3/Sparkle settings, an app-store or ad-hoc leg \"distribute\": false to build without uploading. Delete the legs you don't ship. No profiles anywhere: CI downloads them from App Store Connect and signs every extension with the profile for its bundle ID.",
+  "platforms": {
+    "ios": {
+      "app-store": {}
+    },
+    "macos": {
+      "direct": { "appcast": true, "s3-subpath": "", "appcast-seed-path": "Config/appcast.xml" },
+      "app-store": { "scheme": "MyApp Store", "configuration": "Release Store" }
+    }
+  },
+  "_comment-source-paths": "KEEP THIS. Without it a product builds only when this file is edited, so a code-only fix merges to main and ships nothing, green. See README section 2a.",
   "source-paths": ["MyApp/**", "Modules/**", "Project.swift"],
-  "s3-subpath": "",
-  "appcast-seed-path": "Config/appcast.xml",
   "changelog": {
     "comingNext": { "en": "" },
     "versions": [

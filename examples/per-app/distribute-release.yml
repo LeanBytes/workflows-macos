@@ -1,17 +1,24 @@
 # ── Per-app release shell ────────────────────────────────────────────────────
 # Copy to .github/workflows/distribute-release.yml. Each product releases
-# INDEPENDENTLY via its own tag `<id>-v<X.Y.Z>` (e.g. `main-v2.13.0`). The
-# orchestrator parses the tag → the target product, validates the version
-# against that product's inline changelog, and builds + publishes just it.
+# INDEPENDENTLY via its own version tag: bare `vX.Y.Z` for the primary product
+# (the one without an "id"), `<id>-vX.Y.Z` for the others. The orchestrator
+# parses the tag → the product, validates the version against that product's
+# inline changelog, and builds + publishes its Direct leg: stable DMG, Sparkle
+# stable feed, Changelog.json, GitHub release.
+#
+# App Store legs build nothing here: you submit the build you tested in
+# TestFlight in App Store Connect. For a product without a Direct leg, the tag
+# is just the marker of what shipped (and stops further builds of that version).
 # ─────────────────────────────────────────────────────────────────────────────
 name: Distribute Release
 
 on:
   push:
     tags:
-      - '*-v*'            # per-product release, e.g. main-v2.13.0 / companion-v1.4.0
-      - '!*-v*-beta.*'    # exclude auto-pushed betas
-      - '!*-v*-alpha.*'   # exclude manual alphas
+      - 'v[0-9]*'         # the primary product, e.g. v2.13.0
+      - '*-v[0-9]*'       # any other product, e.g. pro-v2.13.0
+      - '!*-beta.*'       # exclude the Direct betas distribute.yml pushes
+      - '!*-alpha.*'      # exclude manual alphas
 
 permissions:
   contents: write
@@ -19,31 +26,20 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.5.9
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.0
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
-      PROV_PROF_DEVID_BASE64:         ${{ secrets.PROV_PROF_DEVID_BASE64 }}
-      # PROV_PROF_DEVID_PRO_BASE64:   ${{ secrets.PROV_PROF_DEVID_PRO_BASE64 }}
-      # PROV_PROF_STORE_PRO_BASE64:   ${{ secrets.PROV_PROF_STORE_PRO_BASE64 }}
-      # APPLE_DISTR_P12_BASE64:       ${{ secrets.APPLE_DISTR_P12_BASE64 }}     # if any product builds App Store
-      # APPLE_DISTR_PASSWORD:         ${{ secrets.APPLE_DISTR_PASSWORD }}
-      # MAC_DISTR_P12_BASE64:         ${{ secrets.MAC_DISTR_P12_BASE64 }}
-      # MAC_DISTR_PASSWORD:           ${{ secrets.MAC_DISTR_PASSWORD }}
-      # PROV_PROF_STORE_BASE64:       ${{ secrets.PROV_PROF_STORE_BASE64 }}
-      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}
+      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}               # profiles, notarization
       ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
     # with:
-    #   build-app-store: true            # default a product file inherits
-    #   distribute-app-store: true
     #   use-tuist: true
-    #   runs-on-build-direct: '"macos-26"'  # runners default to self-hosted macOS; override to hosted (or a specific runner) here
-    #   runs-on-build-store: '"macos-26"'   # the App Store archive needs a released Xcode
+    #   runs-on-build-mac-direct: '"macos-26"'  # runners default to self-hosted macOS; override to hosted (or a specific runner) here
     #   create-discussion: true          # opt-in; needs Discussions + the exact category
     #   attach-release-assets: false     # skip GitHub-Release asset upload (S3 keeps the DMG/ZIP) — saves budget
     #   artifact-retention-days: 30      # keep uploaded build artifacts longer than the 7-day default

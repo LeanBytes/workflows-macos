@@ -1,0 +1,74 @@
+# ── Per-app distribute shell ─────────────────────────────────────────────────
+# Copy to .github/workflows/distribute.yml. Fires on every push to main. The
+# orchestrator discovers Config/products/<id>.json and builds every leg (one per
+# platform and channel) of each product whose version is unreleased and that
+# changed:
+#   * App Store legs (iPhone, iPad, Mac) → TestFlight. No tag: you submit the
+#     build you tested in App Store Connect.
+#   * Ad Hoc legs (iPhone, iPad) → IPA + manifest on S3.
+#   * Direct legs (Mac) → S3, the Sparkle beta feed, a <prefix><ver>-beta.N tag
+#     and a pre-release.
+# The same file serves every app: which legs exist is the product file's job.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Distribute
+
+on:
+  push:
+    branches: [main]
+
+  # Manual build. Normally a product builds only when its file (or its
+  # source-paths) changed; tick the box to build anyway — after a flaky runner,
+  # a toolchain or dependency bump, a TestFlight build about to expire, or to
+  # reship the same code. It does NOT override "already released": bump the
+  # changelog version for that. Run it against main; distribute-alpha is the
+  # one meant for feature branches.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if nothing changed"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  distribute:
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.0
+    # `secrets: inherit` only works same-org; the explicit list works universally.
+    # One list for every app: a secret a leg doesn't use is simply never read.
+    # No provisioning profiles — the App Store Connect key downloads them.
+    secrets:
+      APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}   # App Store and Ad Hoc legs
+      APPLE_DISTR_PASSWORD:           ${{ secrets.APPLE_DISTR_PASSWORD }}
+      MAC_DISTR_P12_BASE64:           ${{ secrets.MAC_DISTR_P12_BASE64 }}     # Mac App Store legs (.pkg)
+      MAC_DISTR_PASSWORD:             ${{ secrets.MAC_DISTR_PASSWORD }}
+      DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}  # Direct legs
+      DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
+      KEYCHAIN_PASSWORD:              ${{ secrets.KEYCHAIN_PASSWORD }}
+      ASC_KEY_ID:                     ${{ secrets.ASC_KEY_ID }}               # profiles, uploads, notarization
+      ASC_ISSUER_ID:                  ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
+      AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}        # Direct and Ad Hoc legs
+      AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}   # a direct leg with "appcast": true
+      # JIRA_API_TOKEN:               ${{ secrets.JIRA_API_TOKEN }}           # if run-tests
+      # A leg naming another certificate in "cert-secret" needs it passed too:
+      # DEVELOPER_ID_P12_ALT_BASE64:  ${{ secrets.DEVELOPER_ID_P12_ALT_BASE64 }}
+      # DEVELOPER_ID_PASSWORD_ALT:    ${{ secrets.DEVELOPER_ID_PASSWORD_ALT }}
+    with:
+      # false on a push (the input does not exist there), true only when the box
+      # is ticked on a manual run. Keep this line even if you add nothing else.
+      force: ${{ inputs.force || false }}
+    # ── Build settings — uncomment what you need (they belong under `with:`) ─
+    #   use-tuist: true                  # FlowMoose
+    #   lfs: true
+    #   # runners default to self-hosted macOS ([self-hosted, macOS]); override here, e.g.:
+    #   runs-on-build-mac-direct: '["self-hosted","agent-alex"]'  # pin to a specific runner
+    #   runs-on-build-mac-store: '"macos-26"'           # the App Store archive needs a released Xcode
+    #   runs-on-build-ios: '"macos-26"'
+    #   runs-on-test: '"macos-26"'                      # or send a job back to a hosted runner
+    #   runs-on-publish: '"macos-26"'
+    #   run-tests: true                  # gate the build on tests (files a Jira ticket on failure)
+    #   attach-release-assets: false     # skip GitHub pre-release asset upload (S3 keeps the DMG/ZIP) — saves budget
+    #   artifact-retention-days: 30      # keep uploaded build/test artifacts longer than the 7-day default

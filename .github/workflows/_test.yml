@@ -1,7 +1,7 @@
 # ── Test runner (reusable) ───────────────────────────────────────────────────
 # Runs an app's Swift tests UNSIGNED and reports pass/fail + coverage. Called by
-# distribute-pr.yml (red check on PRs), distribute-beta.yml (a gate before the
-# beta is published), and a per-app nightly shell. The test logic lives in the
+# distribute-pr.yml (red check on PRs), distribute.yml (a gate before anything
+# is built or published), and a per-app nightly shell. The test logic lives in the
 # shared `.github/scripts/run-tests.sh`; this workflow checks workflows-macos out
 # into `.shared-ci/` (same commit, via github.job_workflow_sha) and runs it.
 #
@@ -52,6 +52,10 @@ on:
         default: ""
       test-plan:
         description: "Optional .xctestplan name."
+        type: string
+        default: ""
+      test-destination:
+        description: "xcodebuild -destination for the test run, e.g. 'platform=iOS Simulator,name=iPhone 17'. Empty = the Mac."
         type: string
         default: ""
       configuration:
@@ -173,6 +177,8 @@ jobs:
       EXTRA_ARGS: ${{ inputs.xcodebuild-test-args }}
       TEST_SCHEME: ${{ inputs.test-scheme }}
       TEST_PLAN: ${{ inputs.test-plan }}
+      # Empty falls through to run-tests.sh's default, the Mac.
+      TEST_DESTINATION: ${{ inputs.test-destination }}
       APP_NAME: ${{ inputs.app-name }}
       SWIFT_PACKAGE_PATH: ${{ inputs.swift-package-path }}
       SWIFT_TEST_FILTER: ${{ inputs.swift-test-filter }}

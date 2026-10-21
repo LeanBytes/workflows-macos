@@ -1,16 +1,17 @@
 {
   "id": "",
-  "platform": "macos",
   "scheme": "FileFillet",
   "product-name": "FileFillet",
   "bundle-id": "com.example.ff",
-  "scheme-store": "FileFillet_Store",
-  "build-app-store": true,
-  "distribute-app-store": true,
-  "distribute-appcast": true,
-  "s3-subpath": "",
-  "appcast-filename": "appcast.xml",
-  "devid-cert-secret": "DEVELOPER_ID_P12_ALT_BASE64",
-  "devid-cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT",
+  "platforms": {
+    "macos": {
+      "direct": {
+        "appcast": true,
+        "cert-secret": "DEVELOPER_ID_P12_ALT_BASE64",
+        "cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT"
+      },
+      "app-store": { "scheme": "FileFillet_Store", "distribute": false }
+    }
+  },
   "changelog": { "versions": [ { "version": "1.0.0", "items": [ { "type": "feat", "title": { "en": "base" } } ] } ] }
 }

@@ -1,0 +1,7 @@
+{
+  "id": "phone",
+  "scheme": "Phone", "bundle-id": "com.example.phone",
+  "channel": "ad-hoc",
+  "profile-secret": "PROV_PROF_ADHOC_BASE64",
+  "changelog": { "versions": [ { "version": "1.0.0", "items": [] } ] }
+}

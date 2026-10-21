@@ -2,7 +2,7 @@
 #
 # Local Developer ID Direct build — run the SAME pipeline CI runs, on your Mac,
 # with no commit/push and no CI minutes. This is a thin wrapper around the shared
-# core `.github/scripts/build-direct.sh` (the exact script `_build-direct.yml`
+# core `.github/scripts/build-direct.sh` (the exact script `_build-mac-direct.yml`
 # runs); it sources a local env file holding the same secrets + vars CI uses,
 # computes a local version, and runs every phase in one process.
 #
