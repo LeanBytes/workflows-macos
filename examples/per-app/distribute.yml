@@ -4,7 +4,8 @@
 # platform and channel) of each product whose version is unreleased and that
 # changed:
 #   * App Store legs (iPhone, iPad, Mac) → TestFlight. No tag: you submit the
-#     build you tested in App Store Connect.
+#     build you tested in App Store Connect. They build when something changed
+#     since the last successful run, so a failed run is picked up by the next.
 #   * Ad Hoc legs (iPhone, iPad) → IPA + manifest on S3.
 #   * Direct legs (Mac) → S3, the Sparkle beta feed, a <prefix><ver>-beta.N tag
 #     and a pre-release.
@@ -30,7 +31,8 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: write   # Direct betas: push the tag, create the pre-release
+  actions: read     # find the last successful run, the reference for App Store and Ad Hoc builds
 
 jobs:
   distribute:

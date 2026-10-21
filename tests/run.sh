@@ -58,12 +58,12 @@ jok "the Direct leg carries the beta version, the App Store leg the bare one" \
   'l = L(); assert l["main-macos-direct"]["marketing"] == "2.14.0-beta.1", l; assert l["main-macos-app-store"]["marketing"] == "2.14.0"; assert l["main-macos-direct"]["artifact-label"] == "v2.14.0-beta.1"'
 line "no iPhone leg builds" "has-ios=false"
 
-echo "== plan: nothing released, no tags, no BEFORE (a manual run) → both build =="
+echo "== plan: nothing released, no tags, no successful run yet → both build =="
 CAP PRODUCTS_DIR="$MULTI" GIT_TAGS="" BUILD_NUMBER="x" python3 "$PY" plan
 jok "both build; the store-only product gets no tag" \
   'p = P(); assert sorted(p) == ["companion", "main"], p; assert p["companion"]["release-tag"] == "", p; assert o["has-any"] == "true"'
-grep -q "no previous commit to compare against" /tmp/pd.err && pass "says why the store-only product builds" \
-  || bad "a store-only product built without BEFORE must say why"
+grep -q "no earlier successful run to compare against" /tmp/pd.err && pass "says why the store-only product builds" \
+  || bad "a store-only product built without SINCE must say why"
 
 echo "== plan: push 2 — only main changed =="
 CAP PRODUCTS_DIR="$MULTI" GIT_TAGS="main-v2.14.0-beta.1" ASSUME_CHANGED="main" BUILD_NUMBER="x" python3 "$PY" plan
@@ -98,17 +98,24 @@ grep -q "force was set, but" /tmp/pd.err \
   || { echo "  FAIL: forcing an already-released version must ::warning::, not ::notice::"; FAIL=1; }
 
 # The wiring: `*` when the box is ticked, "" when it is not — never a value that
-# products.py would read as "nothing changed". And the push's previous head,
-# which a product without a Direct leg compares against.
+# products.py would read as "nothing changed". And the commit of the last
+# successful run, which a product without a Direct leg compares against: the
+# push's own `before` would lose the changes of a failed run, a [skip ci] push,
+# or a queued run GitHub cancelled for a newer one.
 DWF="$W/distribute.yml"
 grep -q "^      force:" "$DWF" && pass "distribute.yml declares force" \
   || { echo "  FAIL: distribute.yml has no force input"; FAIL=1; }
 grep -qF "ASSUME_CHANGED: \${{ inputs.force && '*' || '' }}" "$DWF" \
   && pass "force wires to ASSUME_CHANGED ('*' on, '' off)" \
   || { echo "  FAIL: distribute.yml must set ASSUME_CHANGED from force"; FAIL=1; }
-grep -qF 'BEFORE: ${{ github.event.before }}' "$DWF" \
-  && pass "plan gets the push's previous head as BEFORE" \
-  || { echo "  FAIL: distribute.yml must pass github.event.before to products.py plan"; FAIL=1; }
+grep -qF 'SINCE: ${{ steps.since.outputs.since }}' "$DWF" \
+  && grep -qF 'actions/workflows/$wf/runs?branch=main&status=success' "$DWF" \
+  && pass "plan compares against the last successful run on main" \
+  || { echo "  FAIL: distribute.yml must pass the last successful run's head to products.py plan as SINCE"; FAIL=1; }
+for f in "$DWF" "$ROOT/examples/per-app/distribute.yml"; do
+  grep -qE '^  actions: read' "$f" && pass "$(basename "$(dirname "$f")")/$(basename "$f") grants actions: read" \
+    || { echo "  FAIL: $f must grant 'actions: read' — without it the runs list answers 403"; FAIL=1; }
+done
 grep -rqE "CHANGED_PRODUCTS|force-beta|plan-beta" "$ROOT/.github" \
   && { echo "  FAIL: a retired name (CHANGED_PRODUCTS / force-beta / plan-beta) is still referenced"; FAIL=1; } \
   || pass "no stale CHANGED_PRODUCTS / force-beta / plan-beta references"
@@ -163,7 +170,8 @@ echo "== universal: one product, iPhone + Mac, both App Store =="
 CAP PRODUCTS_DIR="$UNIVERSAL" ASSUME_CHANGED="*" BUILD_NUMBER="7" python3 "$PY" plan
 jok "both legs, one version, no tag; the Mac leg uses its own scheme" \
   'l = L(); assert sorted(l) == ["game-ios-app-store", "game-macos-app-store"], l; assert {x["marketing"] for x in l.values()} == {"1.0.0"}; assert l["game-macos-app-store"]["scheme"] == "GameMac"; assert l["game-ios-app-store"]["bundle-id"] == l["game-macos-app-store"]["bundle-id"]; assert P()["game"]["release-tag"] == ""'
-line "a Mac leg makes the tests run on the Mac" "test-destination=platform=macOS"
+jok "tests default to ONE leg: the Mac scheme on the Mac, never the iPhone scheme on the Mac" \
+  'assert (o["test-scheme"], o["test-destination"]) == ("GameMac", "platform=macOS"), o'
 
 echo "== ad hoc: an iPhone product for registered devices =="
 CAP PRODUCTS_DIR="$ADHOC" ASSUME_CHANGED="*" BUILD_NUMBER="7" python3 "$PY" plan
@@ -238,7 +246,7 @@ JSON
     git add -A && git commit -qm "code only"
   ) >/dev/null 2>&1
 }
-plan_in() { CAP bash -c "cd '$1' && PRODUCTS_DIR='$1/Config/products' GIT_TAGS='app-v1.0.0-beta.1' BEFORE='$2' BUILD_NUMBER=x python3 '$PY' plan"; }
+plan_in() { CAP bash -c "cd '$1' && PRODUCTS_DIR='$1/Config/products' GIT_TAGS='app-v1.0.0-beta.1' SINCE='$2' BUILD_NUMBER=x python3 '$PY' plan"; }
 
 DIRECT='{"macos": {"direct": {}}}'
 STORE='{"ios": {"app-store": {}}}'
@@ -255,22 +263,23 @@ line "Direct: code-only change WITHOUT source-paths → nothing builds" "has-any
   && pass "the silent skip is a warning naming the fix" \
   || bad "expected a ::warning:: mentioning source-paths; got: $(cat /tmp/pd.err)"
 
-# A product without a Direct leg compares the push (BEFORE..HEAD), never tags.
+# A product without a Direct leg compares against SINCE (the last successful
+# run's commit), never tags.
 S_WITH=$(mktemp -d); mkrepo "$S_WITH" "$STORE" '"source-paths": ["Sources/**"],'
 PREV=$(git -C "$S_WITH" rev-parse HEAD~1); HEAD_=$(git -C "$S_WITH" rev-parse HEAD)
 plan_in "$S_WITH" "$PREV"
-jok "store-only: code-only push WITH source-paths → builds, untagged" \
+jok "store-only: code-only change WITH source-paths → builds, untagged" \
   'p = P(); assert list(p) == ["app"] and p["app"]["release-tag"] == "", p'
 plan_in "$S_WITH" "$HEAD_"
-line "store-only: a push that changed nothing of it → nothing builds" "has-any=false"
-grep -q "in this push" /tmp/pd.err && pass "and the warning says 'in this push'" || bad "store-only skip must say 'in this push'"
+line "store-only: nothing of it changed since the last successful run → nothing builds" "has-any=false"
+grep -q "the last successful run" /tmp/pd.err && pass "and the warning names the reference" || bad "store-only skip must name the last successful run"
 plan_in "$S_WITH" "0000000000000000000000000000000000000000"
-jok "store-only: the push that created the branch → builds" 'assert list(P()) == ["app"], P()'
+jok "store-only: an all-zero reference (a branch's first push) → builds" 'assert list(P()) == ["app"], P()'
 plan_in "$S_WITH" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-jok "store-only: a BEFORE git cannot resolve (force-push) → builds rather than ship nothing" 'assert list(P()) == ["app"], P()'
+jok "store-only: a reference git cannot resolve (force-push) → builds rather than ship nothing" 'assert list(P()) == ["app"], P()'
 S_WITHOUT=$(mktemp -d); mkrepo "$S_WITHOUT" "$STORE" ''
 plan_in "$S_WITHOUT" "$(git -C "$S_WITHOUT" rev-parse HEAD~1)"
-line "store-only: code-only push WITHOUT source-paths → nothing builds" "has-any=false"
+line "store-only: code-only change WITHOUT source-paths → nothing builds" "has-any=false"
 rm -rf "$WITH" "$WITHOUT" "$S_WITH" "$S_WITHOUT"
 
 echo "== plan-alpha =="

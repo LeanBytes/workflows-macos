@@ -6,11 +6,13 @@
 # Products are DISCOVERED from Config/products/<id>.json. `products.py plan`
 # expands each into one LEG per platform and channel and picks what builds: a
 # product builds only when its version is unreleased AND it changed — since its
-# last -beta.N tag when it has a Direct leg, in this push when it hasn't.
+# last -beta.N tag when it has a Direct leg, since the last successful run of
+# this workflow on main when it hasn't (so a failed run is picked up by the
+# next push).
 #
 #   * App Store legs (iPhone, iPad, Mac) go to TestFlight. No tag, no release:
 #     the build tested in TestFlight is the build you submit in App Store
-#     Connect. A failed build is retried with Re-run, which replays the push.
+#     Connect.
 #   * Ad Hoc legs (iPhone, iPad) put an IPA + manifest on S3, live at once.
 #   * Direct legs (Mac) go to S3 and the Sparkle beta feed, and the product
 #     pushes its own `<prefix><ver>-beta.N` tag + a pre-release.
@@ -179,6 +181,7 @@ on:
 
 permissions:
   contents: write          # push Direct beta tags + create their pre-releases
+  actions: read            # find the last successful run (the reference for untagged products)
 
 # Repo-wide, never cancelled: two racing pushes would otherwise both diff
 # against the same last beta tag and ship the same change twice.
@@ -222,13 +225,34 @@ jobs:
           path: .shared-ci
           token: ${{ secrets.SHARED_WORKFLOWS_TOKEN || github.token }}
 
+      # A product without a Direct leg has no tags to compare against, so it
+      # compares against the commit the last successful run of this workflow on
+      # main built from. Not the push's own `before`: a run that failed, a
+      # [skip ci] push, or a queued run GitHub cancelled for a newer one would
+      # then lose its changes for good. Without `actions: read` in the caller's
+      # shell the API answers 403, and the push's `before` is the fallback.
+      - name: Find the last successful run
+        id: since
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          wf="${GITHUB_WORKFLOW_REF%@*}"; wf="${wf#*/.github/workflows/}"
+          if sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$wf/runs?branch=main&status=success&per_page=1" \
+                     --jq '.workflow_runs[0].head_sha // ""'); then
+            echo "Last successful run of $wf on main built: ${sha:-nothing yet}"
+          else
+            echo "::warning::Could not list the runs of $wf — add 'actions: read' to the shell's permissions. Comparing against the push's previous commit instead, which loses the changes of a failed or skipped run."
+            sha="$BEFORE"
+          fi
+          echo "since=$sha" >> "$GITHUB_OUTPUT"
+
       - name: Plan builds
         id: plan
         env:
           PRODUCTS_DIR: ${{ inputs.products-dir }}
-          # The push's previous head: a product without a Direct leg (no tags)
-          # builds when this push changed it. Empty on a manual run.
-          BEFORE: ${{ github.event.before }}
+          SINCE: ${{ steps.since.outputs.since }}
           # `*` = every discovered product. Off renders to "", which products.py
           # treats as UNSET — the `if inj:` there is load-bearing: under an
           # `is not None` test an empty value would mean "nothing changed" and
@@ -560,13 +584,13 @@ jobs:
           S3_DOWNLOAD_URL: ${{ vars.S3_DOWNLOAD_URL }}
         run: |
           set -euo pipefail
-          if [ -z "${S3_DISTRIBUTION_PATH:-}" ] || [ -z "${S3_DOWNLOAD_URL:-}" ]; then
-            echo "::error::The Ad Hoc channel needs the S3_DISTRIBUTION_PATH and S3_DOWNLOAD_URL variables."
-            exit 1
-          fi
           while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub afile aseed acast label mkt kind; do
             [ "$chan" = "ad-hoc" ] || continue
             [ "$dist" = "True" ] || { echo "leg $leg: distribute=false — no S3 upload"; continue; }
+            if [ -z "${S3_DISTRIBUTION_PATH:-}" ] || [ -z "${S3_DOWNLOAD_URL:-}" ]; then
+              echo "::error::The Ad Hoc channel needs the S3_DISTRIBUTION_PATH and S3_DOWNLOAD_URL variables."
+              exit 1
+            fi
             echo "::group::S3 upload (Ad Hoc) — $leg"
             IPA=$(ls ./artifacts/ios/ios-build-$leg/*.ipa 2>/dev/null | head -1 || true)
             if [ -z "$IPA" ] || [ ! -f "$IPA" ]; then

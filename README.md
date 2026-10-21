@@ -83,7 +83,7 @@ Each product is one **`Config/products/<id>.json`** in your app repo — its bui
 
 **What builds on a push (the gate).** A product builds **only when** (a) its `changelog.versions[0]` version isn't released (no bare `<prefix><ver>` tag) AND (b) it changed — its own `Config/products/<id>.json` **or any of its `source-paths`**:
 - **With a Direct leg:** since its last `-beta.N` tag, as before.
-- **Without one:** in this push (`github.event.before`..`HEAD`), because there are no tags to compare against. A failed build is retried with **Re-run**, which replays the same push. A manual run (no previous commit to compare against) builds.
+- **Without one:** since the commit the **last successful run** of `distribute.yml` on main built from — there are no tags to compare against, so the last good run takes their place. A failed run, a `[skip ci]` push, or a queued run GitHub cancelled for a newer one is therefore picked up by the next run, not lost. Listing the runs needs **`actions: read`** in the shell's `permissions` (the example has it); without it the run warns and compares against the push's previous commit only. The very first run, with no successful run before it, builds.
 
 So editing only product A's changelog builds **only A**; a product at an already-released version is skipped (idle), never blocked. Start the next version by prepending a new `versions[0]` entry. **`force`** (a checkbox on the manual run) overrides "nothing changed", never "already released".
 
@@ -303,7 +303,7 @@ The cache step runs first (restores the file if previously cached under that key
    - `distribute-appcast`, `s3-subpath`, `appcast-*`, `changelog-filename` → onto the direct leg (`appcast` for the first).
    - `has-finder`, `has-quicklook`, the extension bundle IDs and every `*-profile-secret` → delete them.
    - workflows-ios `channel` → `"platforms": {"ios": {"app-store": {}}}` or `{"ad-hoc": {}}`.
-2. **Shells:** replace them with the four in `examples/per-app/`. `distribute-beta.yml` is now `distribute.yml` (the manual input is `force`, not `force-beta`); the build runner inputs are `runs-on-build-ios`, `runs-on-build-mac-store`, `runs-on-build-mac-direct`; the channel-default inputs and `configuration-*` are gone (the product file holds them); an iPhone app's `extra-xcodebuild-args` signing workaround is no longer needed.
+2. **Shells:** replace them with the four in `examples/per-app/`. `distribute-beta.yml` is now `distribute.yml` (the manual input is `force`, not `force-beta`, and its `permissions` add `actions: read`); the build runner inputs are `runs-on-build-ios`, `runs-on-build-mac-store`, `runs-on-build-mac-direct`; the channel-default inputs and `configuration-*` are gone (the product file holds them); an iPhone app's `extra-xcodebuild-args` signing workaround is no longer needed.
 3. **Secrets:** make sure the App Store Connect key is an **Admin** key, then delete every `PROV_PROF_*` secret after the first green run. An Ad Hoc app that never uploaded to App Store Connect now needs the key too.
 4. **Variables:** `RUNS_ON_BUILD_STORE` / `RUNS_ON_BUILD_DIRECT` are now `RUNS_ON_BUILD_MAC_STORE` / `RUNS_ON_BUILD_MAC_DIRECT`; the old names are no longer read.
 5. **First push:** a Direct product continues its `-beta.N` count. A product without a Direct leg builds on the first push that changes its product file — the migration commit itself.

@@ -38,10 +38,13 @@ Subcommands:
                  changed:
                    * with a Direct leg, since its last `-beta.N` tag. The beta
                      counter is what Direct users see, so it stays.
-                   * without one, in this push (BEFORE..HEAD). App Store and Ad
-                     Hoc builds get no tags: a tag marks a build that reaches
-                     customers on its own, and a TestFlight upload doesn't. A
-                     failed build is retried with Re-run, which replays the push.
+                   * without one, since SINCE: the commit the last successful
+                     run of the workflow built from. App Store and Ad Hoc builds
+                     get no tags (a tag marks a build that reaches customers on
+                     its own, and a TestFlight upload doesn't), and the last good
+                     run takes the tag's place: a failed run, a [skip ci] push or
+                     a queued run GitHub dropped for a newer one is picked up by
+                     the next run instead of being lost.
   plan-release   A pushed `<prefix><version>` tag -> that product's Direct leg.
                  App Store legs build nothing: the build tested in TestFlight is
                  the one you submit.
@@ -56,7 +59,9 @@ timestamp.
 
 Env inputs:
   PRODUCTS_DIR                 product dir (default "Config/products")
-  BEFORE                       (plan) the push's previous head, github.event.before
+  SINCE                        (plan) the commit to compare a product without a
+                               Direct leg against: the head of the last successful
+                               run (the workflow falls back to github.event.before)
   TAG                          (plan-release) the pushed github.ref_name
   PRODUCT_ID / VERSION_BASE    (plan-alpha) the product, and a base-version override
   GIT_TAGS / BUILD_NUMBER      test-injection overrides
@@ -373,13 +378,15 @@ def emit_legs(legs):
 
 def emit_test_defaults(records):
     # The FIRST discovered product (always present, even when nothing builds)
-    # gives the opt-in test gate a scheme regardless of what changed. A product
-    # with a Mac leg tests on the Mac; an iPhone-only product on a Simulator.
+    # gives the opt-in test gate a scheme regardless of what changed. Scheme and
+    # destination come from ONE leg: its Mac leg if it has one (no Simulator
+    # needed), else its first — an iPhone scheme tested on the Mac just fails.
     first = records[0]
     legs = first["_legs"]
-    emit("test-scheme", legs[0]["scheme"] if legs else "")
+    leg = next((l for l in legs if l["platform"] == "macos"), legs[0] if legs else None)
+    emit("test-scheme", leg["scheme"] if leg else "")
     emit("test-app-name", first["product-name"])
-    emit("test-destination", "platform=macOS" if any(l["platform"] == "macos" for l in legs) else IOS_SIMULATOR)
+    emit("test-destination", "platform=macOS" if leg and leg["platform"] == "macos" else IOS_SIMULATOR)
 
 
 def cut(rec, legs, version, label, marketing_direct, release_tag):
@@ -426,7 +433,7 @@ def cmd_plan(products_dir):
     records = resolve(products_dir)
     tags = set(git_tags())
     forced = bool(os.environ.get("ASSUME_CHANGED", "").strip())
-    before = os.environ.get("BEFORE", "").strip()
+    since = os.environ.get("SINCE", "").strip()
     build = build_number()
     rows, legs = [], []
     for r in records:
@@ -461,18 +468,18 @@ def cmd_plan(products_dir):
                 n = 1                                   # first beta of v — the bump IS the change
             row, cut_legs = cut(r, r["_legs"], v, f"v{v}-beta.{n}", f"{v}-beta.{n}", f"{pfx}{v}-beta.{n}")
         else:
-            # No Direct leg, so no tags: the push itself is the reference.
+            # No Direct leg, so no tags: the last successful run is the reference.
             changed = assumed_changed(pid)
             if changed is None:
-                if not before or set(before) == {"0"}:
-                    # A manual run, or the push that created the branch: nothing
-                    # to compare against, and someone asked for a build.
-                    note(f"{pid}: no previous commit to compare against — building")
+                if not since or set(since) == {"0"}:
+                    # No successful run yet (the first run after moving to v0.6),
+                    # or a manual run with nothing to compare against: build.
+                    note(f"{pid}: no earlier successful run to compare against — building")
                     changed = True
                 else:
-                    changed = changed_between(before, r, products_dir)
+                    changed = changed_between(since, r, products_dir)
             if not changed:
-                unchanged_warning(r, products_dir, "in this push")
+                unchanged_warning(r, products_dir, f"since {since[:12]}, the last successful run")
                 continue
             row, cut_legs = cut(r, r["_legs"], v, f"v{v}-{build}", v, "")
         rows.append(row)
