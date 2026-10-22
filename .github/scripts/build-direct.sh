@@ -148,15 +148,20 @@ phase_setup() {
     # tap outright — so Tuist is installed through mise instead. mise is installed
     # with its official one-liner (the same method used on the self-hosted runner);
     # it lands in ~/.local/bin, which isn't on PATH by default, so we prepend it.
-    # A committed mise.toml / .tool-versions pin is honored (reproducible builds);
-    # without one we fall back to latest. Runners that already have mise skip the
-    # install; CI auto-trusts the repo config (CI=true), so no `mise trust`.
+    # Runners that already have mise skip the install; CI auto-trusts the repo
+    # config (CI=true), so no `mise trust`.
     # `mise exec` runs Tuist without needing it on PATH (mise shims aren't active
     # in the non-interactive CI shell).
+    # The app pins Tuist in its mise config (mise.toml, .mise.toml or
+    # .tool-versions) and `mise install` installs exactly that. `mise which`
+    # stops an app without a pin, where `mise exec` would run any Tuist the
+    # runner has. Never `mise use`: it rewrites the app's pin. Never
+    # `tuist --version`: Tuist 4 has no such option (#39).
     export PATH="$HOME/.local/bin:$PATH"
     command -v mise >/dev/null 2>&1 || curl https://mise.run | sh
     mise install
-    mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest
+    mise which tuist >/dev/null 2>&1 || { echo "::error::Tuist is not pinned. Commit a mise.toml to the app repository with [tools] tuist = \"x.y.z\" ('tuist version' prints yours)."; exit 1; }
+    mise exec -- tuist version
     mise exec -- tuist install
     mise exec -- tuist generate --no-open
   else

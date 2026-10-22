@@ -758,4 +758,34 @@ sys.exit(1 if missing or not keys else 0)
 PYMIG
 
 echo
+echo "== Tuist: the app's own pin, never latest =="
+# Tuist 4 has no --version, so the probe always failed and every build ran
+# `mise use tuist@latest`: it rewrote the app's pin to latest, and on 2026-10-22
+# latest stopped resolving (#39).
+python3 - "$ROOT" <<'PYTUIST' || FAIL=1
+import glob, os, re, sys
+files = sorted(glob.glob(os.path.join(sys.argv[1], ".github/workflows/*.yml"))
+               + glob.glob(os.path.join(sys.argv[1], ".github/scripts/*.sh")))
+bad, n = [], 0
+for f in files:
+    code = [l for l in open(f).read().splitlines() if not l.lstrip().startswith("#")]
+    for i, l in enumerate(code):
+        for banned in ("mise use", "tuist --version", "tuist@latest"):
+            if banned in l:
+                bad.append(f"{os.path.basename(f)}: runs {banned!r}")
+        if re.search(r"\bmise install\b", l):
+            n += 1
+            after = " ".join(code[i + 1:i + 3])
+            if "mise which tuist" not in after or "mise exec -- tuist version" not in after:
+                bad.append(f"{os.path.basename(f)}: a Tuist install without the pin check and 'tuist version'")
+if not n:
+    bad.append("no Tuist install found")
+for b in bad:
+    print(f"  FAIL: {b}")
+if not bad:
+    print(f"  ok  : all {n} Tuist installs use the app's pin, stop without one and log 'tuist version'")
+sys.exit(1 if bad else 0)
+PYTUIST
+
+echo
 [ $FAIL -eq 0 ] && echo "ALL TESTS PASSED ✅" || { echo "SOME TESTS FAILED ❌"; exit 1; }

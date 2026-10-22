@@ -75,14 +75,20 @@ run_xcodebuild() {
   if [ "$USE_TUIST" = "true" ]; then
     # Tuist via mise — the `brew tap tuist/tuist` cask is broken upstream (invalid
     # `conflicts_with formula:` stanza). mise is installed with its official
-    # one-liner into ~/.local/bin (not on PATH by default → we prepend it); a
-    # committed mise.toml pin is honored, else latest. `mise exec` runs Tuist
-    # without it being on PATH. Whole sequence is managed (no `set -e`) → XC_RC=70.
+    # one-liner into ~/.local/bin (not on PATH by default → we prepend it).
+    # `mise exec` runs Tuist without it being on PATH. Whole sequence is managed
+    # (no `set -e`) → XC_RC=70.
+    # The app pins Tuist in its mise config (mise.toml, .mise.toml or
+    # .tool-versions) and `mise install` installs exactly that. `mise which`
+    # stops an app without a pin, where `mise exec` would run any Tuist the
+    # runner has. Never `mise use`: it rewrites the app's pin. Never
+    # `tuist --version`: Tuist 4 has no such option (#39).
     export PATH="$HOME/.local/bin:$PATH"
     if ! {
       { command -v mise >/dev/null 2>&1 || curl https://mise.run | sh; } &&
       mise install &&
-      { mise exec -- tuist --version >/dev/null 2>&1 || mise use tuist@latest; } &&
+      { mise which tuist >/dev/null 2>&1 || { echo "::error::Tuist is not pinned. Commit a mise.toml to the app repository with [tools] tuist = \"x.y.z\" ('tuist version' prints yours)."; false; }; } &&
+      mise exec -- tuist version &&
       mise exec -- tuist install &&
       mise exec -- tuist generate --no-open
     }; then
