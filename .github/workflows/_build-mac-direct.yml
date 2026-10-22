@@ -64,6 +64,10 @@ on:
         description: "Product name — drives the .app name and the DMG/ZIP filenames."
         required: true
         type: string
+      team:
+        description: "The leg's Apple team ID (product file 'team'). Profiles from another team fail the build: the leg got another team's App Store Connect key. Empty = no check."
+        type: string
+        default: ""
       artifact-name:
         description: "GH Actions artifact name for the DMG+ZIP upload. Suffix per leg to avoid matrix collisions."
         type: string
@@ -171,6 +175,7 @@ jobs:
       PRODUCT_NAME: ${{ inputs.product-name }}
       USE_TUIST: ${{ inputs.use-tuist }}
       CONFIGURATION: ${{ inputs.configuration }}
+      TEAM: ${{ inputs.team }}
       EXTRA_ARGS: ${{ inputs.extra-xcodebuild-args }}
       WORK_DIR: /tmp/build/_work
       OUTPUT_DIR: /tmp/build

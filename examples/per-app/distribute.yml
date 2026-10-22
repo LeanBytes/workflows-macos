@@ -36,7 +36,7 @@ permissions:
 
 jobs:
   distribute:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.3
     # `secrets: inherit` only works same-org; the explicit list works universally.
     # One list for every app: a secret a leg doesn't use is simply never read.
     # No provisioning profiles — the App Store Connect key downloads them.
@@ -55,9 +55,13 @@ jobs:
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}   # a direct leg with "appcast": true
       # JIRA_API_TOKEN:               ${{ secrets.JIRA_API_TOKEN }}           # if run-tests
-      # A leg naming another certificate in "cert-secret" needs it passed too:
+      # A leg in another Apple team names its certificate in "cert-secret" and
+      # takes that team's App Store Connect key with "asc-key": "alt":
       # DEVELOPER_ID_P12_ALT_BASE64:  ${{ secrets.DEVELOPER_ID_P12_ALT_BASE64 }}
       # DEVELOPER_ID_PASSWORD_ALT:    ${{ secrets.DEVELOPER_ID_PASSWORD_ALT }}
+      # ASC_KEY_ID_ALT:               ${{ secrets.ASC_KEY_ID_ALT }}
+      # ASC_ISSUER_ID_ALT:            ${{ secrets.ASC_ISSUER_ID_ALT }}
+      # ASC_KEY_ALT_BASE64:           ${{ secrets.ASC_KEY_ALT_BASE64 }}
     with:
       # false on a push (the input does not exist there), true only when the box
       # is ticked on a manual run. Keep this line even if you add nothing else.

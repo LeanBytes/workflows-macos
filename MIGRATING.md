@@ -1,4 +1,4 @@
-# Migrating to v0.6.2
+# Migrating to v0.6.3
 
 v0.6 changes four things an app repo holds:
 
@@ -7,7 +7,7 @@ v0.6 changes four things an app repo holds:
 - the secrets
 - the runner variables
 
-This guide takes an app from any earlier line to **v0.6.2**. Find your starting point in the `uses:` line of your shells (`…/distribute-beta.yml@v0.5.9` means v0.5).
+This guide takes an app from any earlier line to **v0.6.3**. Find your starting point in the `uses:` line of your shells (`…/distribute-beta.yml@v0.5.9` means v0.5).
 
 | You are on | Go to |
 |---|---|
@@ -16,7 +16,7 @@ This guide takes an app from any earlier line to **v0.6.2**. Find your starting 
 | `LeanBytes/workflows-macos` v0.3.x (latest v0.3.50) | [From v0.3](#from-v03), then the v0.5 steps |
 | `LeanBytes/workflows-ios`, any version | [From workflows-ios](#from-workflows-ios) |
 
-**Pin v0.6.2, never v0.6.0.** Before v0.6.1 and v0.5.10, every tag checked out main's shared scripts instead of its own ([#34](https://github.com/LeanBytes/workflows-macos/issues/34)), and before v0.6.2 and v0.5.11 no Tuist install honored the app's pin ([#39](https://github.com/LeanBytes/workflows-macos/issues/39)).
+**Pin v0.6.3, never v0.6.0.** Before v0.6.1 and v0.5.10, every tag checked out main's shared scripts instead of its own ([#34](https://github.com/LeanBytes/workflows-macos/issues/34)), and before v0.6.2 and v0.5.11 no Tuist install honored the app's pin ([#39](https://github.com/LeanBytes/workflows-macos/issues/39)).
 
 ## Broken since 2026-10-21? Unbreak first
 
@@ -27,7 +27,7 @@ Every shell pinned to v0.5.9 or older runs main's scripts. Since v0.6 landed on 
   - beta and release shells: `runs-on-build-direct` and `runs-on-build-store`, with the same value for both.
   - alpha shell: `runs-on-build-direct`.
   - The PR shell keeps `runs-on-build`.
-- **v0.3.x:** there is no quick fix. v0.4 introduced the product files, so migrate to v0.6.2 straight away.
+- **v0.3.x:** there is no quick fix. v0.4 introduced the product files, so migrate to v0.6.3 straight away.
 - **Tuist app (`use-tuist: true`), any line:** since 2026-10-22 the Tuist install fails with `no versions found for tuist`. v0.5.11 and v0.6.2 install the version the app pins, so commit a `mise.toml` at the repo root if it has none:
 
   ```toml
@@ -43,7 +43,7 @@ Every shell pinned to v0.5.9 or older runs main's scripts. Since v0.6 landed on 
    - Mac: Developer ID (`MAC_APP_DIRECT`) for a `direct` leg, Mac App Store (`MAC_APP_STORE`) for an `app-store` leg.
    - iPhone/iPad: `IOS_APP_STORE` for `app-store`, `IOS_APP_ADHOC` for `ad-hoc`.
    - The profiles you copied into `PROV_PROF_*` secrets until now are exactly these, so they usually exist already.
-2. **The App Store Connect key has the Admin role** and belongs to the team that owns the profiles and certificates. The profile download needs Admin; a weaker key fails the first build step with `App Store Connect answered 403`. An app that lives in another Apple team than LeanBytes (MacPacker, for example) passes that team's key and certificates, as repo secrets.
+2. **The App Store Connect key has the Admin role** and belongs to the team that owns the profiles and certificates. The profile download needs Admin; a weaker key fails the first build step with `App Store Connect answered 403`. An app that lives in another Apple team than LeanBytes (MacPacker, for example) passes that team's key and certificates, as repo secrets. A product with legs in two teams keeps the default key and gives the other team's legs their own ([secrets](#3-secrets)).
 3. **Check both before you push.** Run these from your app repo's root, on a Mac with a checkout of this repo:
 
    ```bash
@@ -66,7 +66,7 @@ Every shell pinned to v0.5.9 or older runs main's scripts. Since v0.6 landed on 
 
 Each channel becomes a *leg* under `platforms`. The value your app actually used is the product file's key if it has one, else the input in your shell, else the old default (`build-direct` on, everything else off). Shell inputs that set a channel move into the product file too; see [step 2](#2-shells).
 
-| v0.5 key | v0.6.2 |
+| v0.5 key | v0.6.3 |
 |---|---|
 | `platform` | Delete it. The platform is the key under `platforms`. |
 | `build-direct` | `"platforms": {"macos": {"direct": {}}}` |
@@ -78,7 +78,7 @@ Each channel becomes a *leg* under `platforms`. The value your app actually used
 | `has-finder`, `has-quicklook` | Delete them. Each extension is signed with the profile for its own bundle ID. |
 | `bundle-id-finder`, `bundle-id-quicklook`, `bundle-id-finder-store`, `bundle-id-quicklook-store` | Delete them, same reason. |
 | `devid-profile-secret`, `store-profile-secret` | Delete them. Profiles come from App Store Connect. |
-| `devid-cert-secret`, `devid-cert-password-secret` | `"cert-secret"`, `"cert-password-secret"` on the `direct` leg |
+| `devid-cert-secret`, `devid-cert-password-secret` | `"cert-secret"`, `"cert-password-secret"` on the `direct` leg, plus `"asc-key"` and `"team"` when that certificate is another team's ([secrets](#3-secrets)) |
 | `s3-subpath`, `appcast-filename`, `appcast-seed-path`, `changelog-filename` | Move them onto the `direct` leg. |
 | `id`, `product-name`, `scheme`, `bundle-id`, `source-paths`, `changelog` | Unchanged |
 
@@ -115,7 +115,7 @@ Before (v0.5), `Config/products/app.json`:
 
 …with `configuration-app-store: Release Store` in the beta and release shells.
 
-After (v0.6.2):
+After (v0.6.3):
 
 ```json
 {
@@ -149,14 +149,14 @@ Keep `id` as it was. An empty or missing `id` keeps the bare `vX.Y.Z` and `vX.Y.
 
 The quickest route is to copy the four templates from [`examples/per-app/`](examples/per-app/) and re-apply your own inputs.
 
-- **`distribute-beta.yml` becomes `distribute.yml`.** Rename your shell file too, and point `uses:` at `distribute.yml@v0.6.2`.
+- **`distribute-beta.yml` becomes `distribute.yml`.** Rename your shell file too, and point `uses:` at `distribute.yml@v0.6.3`.
   - Its `workflow_dispatch` input `force-beta` is now `force`.
   - Its `permissions` add `actions: read`: an app without a Direct leg compares against the last successful run.
-- **`distribute-pr.yml`, `distribute-release.yml`, `distribute-alpha.yml`, `nightly-tests.yml`, `nightly-memory-watch.yml`** keep their names. Bump their pins to `@v0.6.2`.
+- **`distribute-pr.yml`, `distribute-release.yml`, `distribute-alpha.yml`, `nightly-tests.yml`, `nightly-memory-watch.yml`** keep their names. Bump their pins to `@v0.6.3`.
 
 Inputs that changed:
 
-| v0.5 input | Shell | v0.6.2 |
+| v0.5 input | Shell | v0.6.3 |
 |---|---|---|
 | `runs-on-build-direct` | beta, release, alpha | `runs-on-build-mac-direct` |
 | `runs-on-build-store` | beta | `runs-on-build-mac-store` |
@@ -206,7 +206,7 @@ permissions:
   actions: read
 jobs:
   distribute:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute.yml@v0.6.3
     with:
       force: ${{ inputs.force || false }}
       runs-on-build-mac-direct: '"macos-26"'
@@ -231,6 +231,19 @@ The rest keep their names. What changed per shell:
 | `distribute-pr.yml` | Nothing; it signs nothing. |
 
 A leg that signs with another team's certificate (`cert-secret` on the leg) names one of the `*_ALT_*` secrets: `DEVELOPER_ID_P12_ALT_BASE64` / `DEVELOPER_ID_PASSWORD_ALT` or `APPLE_DISTR_P12_ALT_BASE64` / `APPLE_DISTR_PASSWORD_ALT`. Pass it in the shell.
+
+Such a leg needs that team's App Store Connect key as well. The key downloads the profiles, and a key sees only its own team's, so a certificate alone can't sign. Give the leg:
+
+- `"asc-key": "alt"`, and pass `ASC_KEY_ID_ALT`, `ASC_ISSUER_ID_ALT` and `ASC_KEY_ALT_BASE64` (an Admin key of that team) in every shell that builds the leg. It then downloads profiles, notarizes and uploads with that key.
+- `"team": "<that team's ID>"`. If the profiles, or a Direct app's signature, come out in any other team, the build fails instead of shipping.
+
+For example, a Direct leg that must stay in an old team, next to an App Store leg in the default team:
+
+```json
+"direct": { "cert-secret": "DEVELOPER_ID_P12_ALT_BASE64", "cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT",
+            "asc-key": "alt", "team": "OLDTEAM123" },
+"app-store": { "scheme": "MyApp_Store", "team": "NEWTEAM456" }
+```
 
 ### 4. Variables
 
@@ -261,7 +274,7 @@ The old names are no longer read, so rename them or a job moves back to the shel
 1. Run `products.py discover` locally (see [Before you start](#before-you-start-every-path)). It must print the legs without an error.
 2. Open a PR. `distribute-pr` compiles one job per leg.
 3. After merging, open the first `distribute` run:
-   - In **Checkout shared scripts**, the log shows the v0.6.2 commit, never `Default branch 'main'`.
+   - In **Checkout shared scripts**, the log shows the v0.6.3 commit, never `Default branch 'main'`.
    - **Download provisioning profiles** lists every bundle ID of the leg.
 4. Delete the `PROV_PROF_*` secrets.
 
@@ -286,7 +299,7 @@ v0.3.50 kept the app's identity in repository variables, the changelog in `Confi
 
 **1. Create `Config/products/app.json`** without an `id`, so the existing `vX.Y.Z` and `vX.Y.Z-beta.N` tags keep counting.
 
-| v0.3 | v0.6.2 |
+| v0.3 | v0.6.3 |
 |---|---|
 | Variable `SCHEME_NAME` | `"scheme"` |
 | Variable `PRODUCT_NAME` | `"product-name"` |
@@ -300,10 +313,10 @@ v0.3.50 kept the app's identity in repository variables, the changelog in `Confi
 
 If the app bundles `Config/Changelog.json` for its What's New view, read the product file's `changelog` object instead. The schema is the same. On release, CI still publishes it to S3 as `Changelog.json`, and the S3 paths don't change: `S3_DISTRIBUTION_PATH`/`<file>` without an `s3-subpath`.
 
-**2. Shells:** start from the v0.6.2 templates, then follow the [v0.5 shell steps](#2-shells) and the [v0.4 runner notes](#from-v04).
+**2. Shells:** start from the v0.6.3 templates, then follow the [v0.5 shell steps](#2-shells) and the [v0.4 runner notes](#from-v04).
 - `changelog-path` is gone.
 - The PR shell's `scheme-name` is gone: the scheme comes from the product file.
-- **Runners: v0.3 defaulted to GitHub-hosted `macos-26`, v0.6.2 defaults to `["self-hosted","macOS"]`.** To stay on hosted runners, set every `runs-on-*` input to `'"macos-26"'`, prepare and discover included.
+- **Runners: v0.3 defaulted to GitHub-hosted `macos-26`, v0.6.3 defaults to `["self-hosted","macOS"]`.** To stay on hosted runners, set every `runs-on-*` input to `'"macos-26"'`, prepare and discover included.
 
 **3. Secrets and variables:** as in [v0.5](#3-secrets). After the first green run, delete the identity variables (`SCHEME_NAME`, `SCHEME_NAME_STORE`, `PRODUCT_NAME`, `BUNDLE_ID*`); nothing reads them since v0.4.
 
@@ -313,7 +326,7 @@ The iPhone/iPad workflows moved into this repo, so the shells now call `LeanByte
 
 **Product file:** `channel` becomes a leg under `platforms.ios`.
 
-| workflows-ios | v0.6.2 |
+| workflows-ios | v0.6.3 |
 |---|---|
 | `"channel": "app-store"` | `"platforms": {"ios": {"app-store": {}}}` |
 | `"channel": "ad-hoc"` | `"platforms": {"ios": {"ad-hoc": {}}}` |
@@ -323,11 +336,11 @@ The iPhone/iPad workflows moved into this repo, so the shells now call `LeanByte
 
 An app on the iPhone and the Mac is one product with both platforms. A Mac leg that needs another scheme says so: `"macos": {"app-store": {"scheme": "MyAppMac"}}`.
 
-**Shells:** copy the v0.6.2 templates.
+**Shells:** copy the v0.6.3 templates.
 - `distribute-beta.yml` (v0.2.0) and `distribute.yml` (v0.4.0) both become workflows-macos `distribute.yml`, with `actions: read` in its permissions.
 - `distribute-release.yml` is only needed once the product has a Direct leg. Without one, a release tag just marks the version as shipped.
 
-| workflows-ios input | v0.6.2 |
+| workflows-ios input | v0.6.3 |
 |---|---|
 | `distribute` | `"distribute"` on the leg |
 | `configuration` | `"configuration"` in the product file |
@@ -346,7 +359,7 @@ All other inputs keep their names.
 - The Ad Hoc S3 location is unchanged (`<S3_DISTRIBUTION_PATH>/<bundle-id>/app.ipa` and `manifest.plist`), so existing install links keep working.
 - The bare `vX.Y.Z` release markers still stop a version from building.
 
-**What changes:** workflows-ios tagged every build. v0.6.2 writes no such tags and doesn't read the old ones. The first push after migrating builds, because it changes the product file.
+**What changes:** workflows-ios tagged every build. v0.6.3 writes no such tags and doesn't read the old ones. The first push after migrating builds, because it changes the product file.
 
 ## From push to App Store review
 

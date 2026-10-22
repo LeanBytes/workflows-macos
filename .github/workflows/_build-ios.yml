@@ -56,6 +56,10 @@ on:
         description: "ExportOptions method: app-store-connect, or release-testing for Ad Hoc (Xcode still accepts the old 'ad-hoc' spelling but calls it deprecated)."
         required: true
         type: string
+      team:
+        description: "The leg's Apple team ID (product file 'team'). Profiles from another team fail the build: the leg got another team's App Store Connect key. Empty = no check."
+        type: string
+        default: ""
       artifact-name:
         description: "GH Actions artifact name for the .ipa upload. Suffix per leg to avoid matrix collisions."
         type: string
@@ -343,6 +347,7 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          TEAM: ${{ inputs.team }}
           PROFILE_TYPE: ${{ inputs.profile-type }}
         run: |
           set -euo pipefail
@@ -366,7 +371,8 @@ jobs:
           # spaces.
           SIGN=()
           while IFS= read -r a; do SIGN+=("$a"); done < <(python3 .shared-ci/.github/scripts/profiles.py \
-            archive-args --profiles "$RUNNER_TEMP/profiles/profiles.json" --type "$PROFILE_TYPE" --cert "Apple Distribution")
+            archive-args --profiles "$RUNNER_TEMP/profiles/profiles.json" --type "$PROFILE_TYPE" --cert "Apple Distribution" \
+            --team "$TEAM")
           [ "${#SIGN[@]}" -gt 0 ] || { echo "::error::no signing settings from profiles.py"; exit 1; }
 
           xcodebuild archive \
@@ -411,6 +417,7 @@ jobs:
         shell: bash
         env:
           INTERNAL_ONLY: ${{ inputs.internal-only }}
+          TEAM: ${{ inputs.team }}
           PROFILE_TYPE: ${{ inputs.profile-type }}
           EXPORT_METHOD: ${{ inputs.export-method }}
         run: |
@@ -418,7 +425,7 @@ jobs:
           python3 .shared-ci/.github/scripts/profiles.py export-options \
             --profiles "$RUNNER_TEMP/profiles/profiles.json" --type "$PROFILE_TYPE" \
             --archive /tmp/build/app.xcarchive --method "$EXPORT_METHOD" \
-            --cert "Apple Distribution" --internal-only "$INTERNAL_ONLY" \
+            --cert "Apple Distribution" --internal-only "$INTERNAL_ONLY" --team "$TEAM" \
             --out /tmp/build/ExportOptions.plist
 
           xcodebuild -exportArchive \

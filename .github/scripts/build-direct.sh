@@ -49,6 +49,7 @@
 #   profiles, notarize  ASC_KEY_ID (plain)  ASC_ISSUER_ID (plain)  ASC_KEY_BASE64
 # Optional env:
 #   USE_TUIST=true|false (default false)   CONFIGURATION (default Release)
+#   TEAM (the leg's Apple team ID; profiles or a signature from another team fail)
 #   EXTRA_ARGS (extra xcodebuild settings; word-split intentionally — unquoted)
 #   PRE_BUILD_SCRIPT (bash script run in `setup`; CI also runs it as a native step)
 #   POST_BUILD_SCRIPT (bash script run in `post-build`, called with the archived
@@ -224,7 +225,8 @@ phase_archive() {
   # archive-args). Read line by line: a setting may contain spaces.
   local sign=() a
   while IFS= read -r a; do sign+=("$a"); done < <(python3 "$SCRIPTS/profiles.py" archive-args \
-    --profiles "$PROFILES/profiles.json" --type MAC_APP_DIRECT --cert "Developer ID Application")
+    --profiles "$PROFILES/profiles.json" --type MAC_APP_DIRECT --cert "Developer ID Application" \
+    --team "${TEAM:-}")
   [ "${#sign[@]}" -gt 0 ] || { echo "::error::no signing settings — did the 'profiles' phase run?" >&2; exit 1; }
   # EXTRA_ARGS is intentionally UNQUOTED so it word-splits into separate
   # xcodebuild build-setting args (e.g. BUILD_RELEASE_DATE=...). Do not quote.
@@ -265,7 +267,7 @@ phase_export() {
   # just bundle ids and profile names).
   python3 "$SCRIPTS/profiles.py" export-options --profiles "$PROFILES/profiles.json" \
     --type MAC_APP_DIRECT --archive "$ARCHIVE" --method developer-id \
-    --cert "Developer ID Application" --out "$WORK_DIR/ExportOptions.plist"
+    --cert "Developer ID Application" --team "${TEAM:-}" --out "$WORK_DIR/ExportOptions.plist"
 
   rm -rf "$EXPORT_DIR"
   xcodebuild -exportArchive \
@@ -322,6 +324,15 @@ phase_verify() {
     xcrun stapler validate -v "$APP"
     spctl --assess --type execute --verbose=4 "$APP"
     codesign --verify --deep --strict --verbose=4 "$APP"
+  fi
+  # What users install: an update from another team breaks code-signing
+  # continuity for every installed copy (#38). profiles.py already refused other
+  # teams' profiles; this checks the result.
+  if [ -n "${TEAM:-}" ]; then
+    local signed
+    signed=$(codesign -dv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+    [ "$signed" = "$TEAM" ] || { echo "::error::$APP is signed by team ${signed:-<none>}, but the leg signs for team $TEAM" >&2; exit 1; }
+    echo "Signed by team $signed, as the leg states."
   fi
 }
 

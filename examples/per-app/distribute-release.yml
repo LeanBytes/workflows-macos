@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   release:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.3
     secrets:
       DEVELOPER_ID_P12_BASE64:        ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:          ${{ secrets.DEVELOPER_ID_PASSWORD }}
@@ -37,6 +37,12 @@ jobs:
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       SPARKLE_ED_PRIVATE_KEY:         ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      # A Direct leg in another Apple team ("cert-secret", "asc-key": "alt"):
+      # DEVELOPER_ID_P12_ALT_BASE64:  ${{ secrets.DEVELOPER_ID_P12_ALT_BASE64 }}
+      # DEVELOPER_ID_PASSWORD_ALT:    ${{ secrets.DEVELOPER_ID_PASSWORD_ALT }}
+      # ASC_KEY_ID_ALT:               ${{ secrets.ASC_KEY_ID_ALT }}
+      # ASC_ISSUER_ID_ALT:            ${{ secrets.ASC_ISSUER_ID_ALT }}
+      # ASC_KEY_ALT_BASE64:           ${{ secrets.ASC_KEY_ALT_BASE64 }}
     # with:
     #   use-tuist: true
     #   runs-on-build-mac-direct: '"macos-26"'  # runners default to self-hosted macOS; override to hosted (or a specific runner) here

@@ -50,6 +50,10 @@ on:
         description: "Xcode scheme to archive."
         required: true
         type: string
+      team:
+        description: "The leg's Apple team ID (product file 'team'). Profiles from another team fail the build: the leg got another team's App Store Connect key. Empty = no check."
+        type: string
+        default: ""
       artifact-name:
         description: "GH Actions artifact name for the .pkg upload. Suffix per leg to avoid matrix collisions."
         type: string
@@ -350,6 +354,7 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          TEAM: ${{ inputs.team }}
         run: |
           set -euo pipefail
 
@@ -372,7 +377,8 @@ jobs:
           # spaces.
           SIGN=()
           while IFS= read -r a; do SIGN+=("$a"); done < <(python3 .shared-ci/.github/scripts/profiles.py \
-            archive-args --profiles "$RUNNER_TEMP/profiles/profiles.json" --type MAC_APP_STORE --cert "Apple Distribution")
+            archive-args --profiles "$RUNNER_TEMP/profiles/profiles.json" --type MAC_APP_STORE --cert "Apple Distribution" \
+            --team "$TEAM")
           [ "${#SIGN[@]}" -gt 0 ] || { echo "::error::no signing settings from profiles.py"; exit 1; }
 
           xcodebuild archive \
@@ -417,13 +423,14 @@ jobs:
         shell: bash
         env:
           INTERNAL_ONLY: ${{ inputs.internal-only }}
+          TEAM: ${{ inputs.team }}
         run: |
           set -euo pipefail
           python3 .shared-ci/.github/scripts/profiles.py export-options \
             --profiles "$RUNNER_TEMP/profiles/profiles.json" --type MAC_APP_STORE \
             --archive /tmp/build/app.xcarchive --method app-store-connect \
             --cert "Apple Distribution" --installer-cert "3rd Party Mac Developer Installer" \
-            --internal-only "$INTERNAL_ONLY" \
+            --internal-only "$INTERNAL_ONLY" --team "$TEAM" \
             --out /tmp/build/ExportOptions.plist
 
           xcodebuild -exportArchive \

@@ -27,7 +27,7 @@
 #     workflow_dispatch:
 #   jobs:
 #     alpha:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.3
 #       secrets:
 #         # … the same block as distribute.yml, minus Sparkle and Jira
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +123,12 @@ on:
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
+      # A leg in another Apple team ("asc-key": "alt") downloads its profiles,
+      # notarizes and uploads with this key. When these are missing the leg gets
+      # no key at all, never the default one.
+      ASC_KEY_ID_ALT:                 { required: false }
+      ASC_ISSUER_ID_ALT:              { required: false }
+      ASC_KEY_ALT_BASE64:             { required: false }
       AWS_ACCESS_KEY_ID:              { required: false }
       AWS_SECRET_ACCESS_KEY:          { required: false }
       SHARED_WORKFLOWS_TOKEN:         { required: false }
@@ -188,7 +194,7 @@ jobs:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(needs.prepare.outputs.ios-legs) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-ios.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-ios.yml@v0.6.3
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -198,6 +204,7 @@ jobs:
       artifact-name: ios-build-${{ matrix.leg.leg }}
       scheme: ${{ matrix.leg.scheme }}
       configuration: ${{ matrix.leg.configuration }}
+      team: ${{ matrix.leg.team }}
       profile-type: ${{ matrix.leg.profile-type }}
       export-method: ${{ matrix.leg.export-method }}
       internal-only: ${{ matrix.leg.internal-only }}
@@ -213,9 +220,9 @@ jobs:
       APPLE_DISTR_P12_BASE64:  ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.APPLE_DISTR_P12_BASE64 }}
       APPLE_DISTR_PASSWORD:    ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.APPLE_DISTR_PASSWORD }}
       KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
-      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      ASC_KEY_ID:              ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ID_ALT' || 'ASC_KEY_ID'] }}
+      ASC_ISSUER_ID:           ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_ISSUER_ID_ALT' || 'ASC_ISSUER_ID'] }}
+      ASC_KEY_BASE64:          ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ALT_BASE64' || 'ASC_KEY_BASE64'] }}
       SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   build-mac-store:
@@ -225,7 +232,7 @@ jobs:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(needs.prepare.outputs.mac-store-legs) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-store.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-store.yml@v0.6.3
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -235,6 +242,7 @@ jobs:
       artifact-name: mac-store-build-${{ matrix.leg.leg }}
       scheme: ${{ matrix.leg.scheme }}
       configuration: ${{ matrix.leg.configuration }}
+      team: ${{ matrix.leg.team }}
       internal-only: ${{ matrix.leg.internal-only }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
@@ -250,9 +258,9 @@ jobs:
       MAC_DISTR_P12_BASE64:    ${{ secrets.MAC_DISTR_P12_BASE64 }}
       MAC_DISTR_PASSWORD:      ${{ secrets.MAC_DISTR_PASSWORD }}
       KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
-      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      ASC_KEY_ID:              ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ID_ALT' || 'ASC_KEY_ID'] }}
+      ASC_ISSUER_ID:           ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_ISSUER_ID_ALT' || 'ASC_ISSUER_ID'] }}
+      ASC_KEY_BASE64:          ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ALT_BASE64' || 'ASC_KEY_BASE64'] }}
       SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   build-mac-direct:
@@ -262,7 +270,7 @@ jobs:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(needs.prepare.outputs.mac-direct-legs) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.3
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -274,6 +282,7 @@ jobs:
       scheme-name: ${{ matrix.leg.scheme }}
       product-name: ${{ matrix.leg.product-name }}
       configuration: ${{ matrix.leg.configuration }}
+      team: ${{ matrix.leg.team }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
@@ -286,9 +295,9 @@ jobs:
       DEVELOPER_ID_P12_BASE64: ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:   ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
-      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      ASC_KEY_ID:              ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ID_ALT' || 'ASC_KEY_ID'] }}
+      ASC_ISSUER_ID:           ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_ISSUER_ID_ALT' || 'ASC_ISSUER_ID'] }}
+      ASC_KEY_BASE64:          ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ALT_BASE64' || 'ASC_KEY_BASE64'] }}
       SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   publish-alpha:
@@ -387,16 +396,26 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
+          ASC_KEY_ID_ALT: ${{ secrets.ASC_KEY_ID_ALT }}
+          ASC_ISSUER_ID_ALT: ${{ secrets.ASC_ISSUER_ID_ALT }}
+          ASC_KEY_ALT_BASE64: ${{ secrets.ASC_KEY_ALT_BASE64 }}
         run: |
           set -uo pipefail
           source .shared-ci/.github/scripts/classify-upload.sh
-          # altool reads the key from here; Cleanup removes it.
+          # altool reads the keys from here; Cleanup removes them. A leg with
+          # "asc-key": "alt" uploads with the *_ALT key, into that team's app.
           mkdir -p ~/.appstoreconnect/private_keys
-          (umask 077; echo "$ASC_KEY_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8)
+          [ -z "$ASC_KEY_ID" ] || (umask 077; echo "$ASC_KEY_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8)
+          [ -z "$ASC_KEY_ID_ALT" ] || (umask 077; echo "$ASC_KEY_ALT_BASE64" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID_ALT}.p8)
+          ALT_LEGS=" $(python3 -c 'import json, sys; print(" ".join(l["leg"] for l in json.loads(sys.argv[1]) if l.get("asc-key") == "alt"))' "$LEGS_JSON") "
           while IFS=$'\x1f' read -r leg id pname plat chan dist bid sub kind; do
             [ "$chan" = "app-store" ] || continue
             [ "$dist" = "True" ] || { echo "leg $leg: distribute=false — skipping upload"; continue; }
             echo "::group::TestFlight upload — $leg"
+            if [[ "$ALT_LEGS" == *" $leg "* ]]; then KEY=$ASC_KEY_ID_ALT; ISSUER=$ASC_ISSUER_ID_ALT; else KEY=$ASC_KEY_ID; ISSUER=$ASC_ISSUER_ID; fi
+            if [ -z "$KEY" ]; then
+              echo "::error::No App Store Connect key for leg $leg"; echo "::endgroup::"; exit 1
+            fi
             if [ "$plat" = "ios" ]; then ext=ipa; type=ios; else ext=pkg; type=macos; fi
             FILE=$(ls ./artifacts/$kind/$kind-build-$leg/*.$ext 2>/dev/null | head -1 || true)
             if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
@@ -404,7 +423,7 @@ jobs:
             fi
             set +e
             OUTPUT=$(xcrun altool --upload-app --type "$type" --file "$FILE" \
-              --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1)
+              --apiKey "$KEY" --apiIssuer "$ISSUER" 2>&1)
             RC=$?
             set -e
             echo "$OUTPUT"

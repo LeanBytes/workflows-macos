@@ -156,6 +156,8 @@ jok "direct settings: changelog-filename and appcast-filename default vs overrid
   'l = L(); assert l["base-macos-direct"]["changelog-filename"] == "Changelog.json"; assert l["pro-macos-direct"]["changelog-filename"] == "Changelog-pro.json"; assert l["pro-macos-direct"]["appcast-filename"] == "appcast-pro.xml"; assert l["base-macos-direct"]["appcast"] is True'
 jok "a leg names its own certificate; the other legs keep the team's" \
   'l = L(); assert l["base-macos-direct"]["cert-secret"] == "DEVELOPER_ID_P12_ALT_BASE64"; assert l["base-macos-direct"]["cert-password-secret"] == "DEVELOPER_ID_PASSWORD_ALT"; assert l["pro-macos-direct"]["cert-secret"] == ""; assert l["base-macos-app-store"]["cert-secret"] == ""'
+jok "a leg in another team takes that team's key and states the team; the others keep the default" \
+  'l = L(); assert (l["base-macos-direct"]["asc-key"], l["base-macos-direct"]["team"]) == ("alt", "ABCDE12345"), l; assert (l["base-macos-app-store"]["asc-key"], l["base-macos-app-store"]["team"]) == ("", ""), l; assert l["pro-macos-direct"]["asc-key"] == "" and l["pro-macos-direct"]["team"] == ""'
 jok "the leg's scheme overrides the product's; distribute false is carried" \
   'l = L(); assert l["base-macos-app-store"]["scheme"] == "FileFillet_Store"; assert l["base-macos-app-store"]["distribute"] is False; assert l["pro-macos-app-store"]["distribute"] is True'
 CAP PRODUCTS_DIR="$MIXED" TAG="v1.0.0" BUILD_NUMBER="x" python3 "$PY" plan-release
@@ -219,6 +221,10 @@ chk_invalid "Direct always publishes"                '{"macos": {"direct": {"dis
 chk_invalid "S3/Sparkle settings only on Direct"     '{"ios": {"app-store": {"appcast": true}}}' "'appcast' belongs on a direct leg"
 chk_invalid "typo in a leg key"                      '{"ios": {"app-store": {"shceme": "X"}}}' "unknown key 'shceme'"
 chk_invalid "Direct needs the .app's name"           '{"macos": {"direct": {}}}' "no 'product-name' on the product or the leg"
+chk_invalid "asc-key names the ALT key or nothing"   '{"ios": {"app-store": {"asc-key": "legacy"}}}' "'asc-key' is \"alt\" (the ASC_*_ALT secrets) or absent, not 'legacy'"
+chk_invalid "team is an Apple team ID"               '{"ios": {"app-store": {"team": "LeanBytes"}}}' "'team' is a 10-character Apple team ID"
+chk_invalid "team on the product would check nothing" '{"ios": {"app-store": {}}}' "'team' belongs on the leg that signs in that team" '"team": "ABCDE12345",'
+chk_invalid "asc-key on the product would switch nothing" '{"ios": {"app-store": {}}}' "'asc-key' belongs on the leg" '"asc-key": "alt",'
 d=$(mktemp -d); printf '{"id":"x","scheme":"X","bundle-id":"b","changelog":{"versions":[{"version":"1.0.0"}]}}' > "$d/x.json"
 CAP PRODUCTS_DIR="$d" python3 "$PY" discover
 err "no platforms block" "'platforms' is missing"
@@ -368,6 +374,39 @@ if not bad:
 sys.exit(1 if bad else 0)
 PYW
 fi
+
+echo
+echo "== App Store Connect key: each leg's own, for profiles, notarization and upload =="
+# One key served every leg, so a product with legs in two Apple teams could not
+# sign one of them (#38). An "alt" leg must get the *_ALT key or none at all.
+python3 - "$W" <<'PYASC' || FAIL=1
+import json, subprocess, sys
+bad, calls = [], 0
+KEYS = (("ASC_KEY_ID", "ASC_KEY_ID_ALT"), ("ASC_ISSUER_ID", "ASC_ISSUER_ID_ALT"), ("ASC_KEY_BASE64", "ASC_KEY_ALT_BASE64"))
+for f in ("distribute-alpha.yml", "distribute.yml", "distribute-release.yml"):
+    p = f"{sys.argv[1]}/{f}"
+    doc = json.loads(subprocess.run(["yq", "-o=json", ".", p], capture_output=True, text=True, check=True).stdout)
+    declared = doc["on"]["workflow_call"]["secrets"]
+    bad += [f"{f}: does not declare {alt}" for _, alt in KEYS if alt not in declared]
+    for jname, job in doc["jobs"].items():
+        if "/_build-" not in job.get("uses", ""):
+            continue
+        calls += 1
+        for name, alt in KEYS:
+            want = f"${{{{ secrets[matrix.leg.asc-key == 'alt' && '{alt}' || '{name}'] }}}}"
+            if job["secrets"].get(name) != want:
+                bad.append(f"{f}:{jname}: {name} is not the leg's own key")
+        if job["with"].get("team") != "${{ matrix.leg.team }}":
+            bad.append(f"{f}:{jname}: does not pass the leg's team")
+    text = open(p).read()
+    if "altool --upload-app" in text and '--apiKey "$KEY" --apiIssuer "$ISSUER"' not in text:
+        bad.append(f"{f}: the TestFlight upload does not use the leg's key")
+for b in bad:
+    print(f"  FAIL: {b}")
+if not bad:
+    print(f"  ok  : all {calls} build calls and both uploads use each leg's own key; every build gets the leg's team")
+sys.exit(1 if bad else 0)
+PYASC
 
 echo
 echo "== profiles: from App Store Connect, before any app code, nowhere in GitHub =="

@@ -29,7 +29,10 @@ Channels per platform: ios takes app-store and ad-hoc; macos takes app-store
 and direct. A leg's object holds only what differs from the product (scheme,
 bundle-id, configuration, product-name), plus `distribute` on an app-store or
 ad-hoc leg and the S3/Sparkle settings on a direct leg. An empty object means
-the product's defaults.
+the product's defaults. A leg that signs in another Apple team than the rest
+names that team's certificate (`cert-secret`, `cert-password-secret`) and App
+Store Connect key (`"asc-key": "alt"`); `team` makes the build fail when the
+profiles come from any other team.
 
 Subcommands:
   discover       Every leg of every product (the PR compile fan-out).
@@ -92,7 +95,8 @@ CHANNELS = {"ios": ("app-store", "ad-hoc"), "macos": ("app-store", "direct")}
 # Designed in, switched on when the first app ships there.
 NOT_YET = ("tvos", "visionos")
 
-LEG_KEYS = {"scheme", "bundle-id", "configuration", "product-name", "cert-secret", "cert-password-secret"}
+LEG_KEYS = {"scheme", "bundle-id", "configuration", "product-name", "cert-secret", "cert-password-secret",
+            "asc-key", "team"}
 DIRECT_KEYS = {"appcast", "s3-subpath", "appcast-filename", "appcast-seed-path", "changelog-filename"}
 
 _EXT = "delete it: every extension is signed with the profile for its own bundle ID"
@@ -261,6 +265,12 @@ def resolve_legs(pid, p, errors):
             if chan == "direct" and not l_name:
                 # The Direct build finds <product-name>.app and names the DMG/ZIP after it.
                 errors.append(f"{where}: no 'product-name' on the product or the leg — the Direct build needs the .app's name")
+            asc_key = str(leg.get("asc-key") or "").strip()
+            if asc_key not in ("", "alt"):
+                errors.append(f"{where}: 'asc-key' is \"alt\" (the ASC_*_ALT secrets) or absent, not '{asc_key}'")
+            team = str(leg.get("team") or "").strip()
+            if team and not re.fullmatch(r"[A-Z0-9]{10}", team):
+                errors.append(f"{where}: 'team' is a 10-character Apple team ID such as \"ABCDE12345\", not '{team}'")
 
             kind = LEG_KINDS[(plat, chan)]
             legs.append({
@@ -278,6 +288,8 @@ def resolve_legs(pid, p, errors):
                 "export-method": kind["export-method"],
                 "cert-secret": str(leg.get("cert-secret") or ""),
                 "cert-password-secret": str(leg.get("cert-password-secret") or ""),
+                "asc-key": asc_key,
+                "team": team,
                 "appcast": as_bool(leg.get("appcast"), False),
                 "s3-subpath": str(leg.get("s3-subpath") or "").strip("/"),
                 "appcast-filename": str(leg.get("appcast-filename") or "appcast.xml"),
@@ -323,6 +335,10 @@ def resolve(products_dir):
         for k, instead in RETIRED.items():
             if k in p:
                 errors.append(f"product '{pid}': '{k}' was retired in v0.6 — {instead}")
+        for k in ("asc-key", "team"):
+            # Ignored at the top, a team check would silently not run.
+            if k in p:
+                errors.append(f"product '{pid}': '{k}' belongs on the leg that signs in that team")
 
         legs = resolve_legs(pid, p, errors)
 

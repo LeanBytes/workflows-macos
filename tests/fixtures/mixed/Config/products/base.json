@@ -8,7 +8,9 @@
       "direct": {
         "appcast": true,
         "cert-secret": "DEVELOPER_ID_P12_ALT_BASE64",
-        "cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT"
+        "cert-password-secret": "DEVELOPER_ID_PASSWORD_ALT",
+        "asc-key": "alt",
+        "team": "ABCDE12345"
       },
       "app-store": { "scheme": "FileFillet_Store", "distribute": false }
     }

@@ -30,7 +30,7 @@
 #         - '!*-alpha.*'
 #   jobs:
 #     release:
-#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.2
+#       uses: LeanBytes/workflows-macos/.github/workflows/distribute-release.yml@v0.6.3
 #       secrets:
 #         DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
 #         # …
@@ -120,6 +120,12 @@ on:
       ASC_KEY_ID:                     { required: false }
       ASC_ISSUER_ID:                  { required: false }
       ASC_KEY_BASE64:                 { required: false }
+      # A leg in another Apple team ("asc-key": "alt") downloads its profiles,
+      # notarizes and uploads with this key. When these are missing the leg gets
+      # no key at all, never the default one.
+      ASC_KEY_ID_ALT:                 { required: false }
+      ASC_ISSUER_ID_ALT:              { required: false }
+      ASC_KEY_ALT_BASE64:             { required: false }
       AWS_ACCESS_KEY_ID:              { required: false }
       AWS_SECRET_ACCESS_KEY:          { required: false }
       SPARKLE_ED_PRIVATE_KEY:         { required: false }
@@ -175,7 +181,7 @@ jobs:
       fail-fast: false
       matrix:
         leg: ${{ fromJSON(needs.prepare.outputs.mac-direct-legs) }}
-    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/_build-mac-direct.yml@v0.6.3
     with:
       post-build-script: ${{ inputs.post-build-script }}
       job-timeout-minutes: ${{ inputs.build-timeout-minutes }}
@@ -187,6 +193,7 @@ jobs:
       scheme-name: ${{ matrix.leg.scheme }}
       product-name: ${{ matrix.leg.product-name }}
       configuration: ${{ matrix.leg.configuration }}
+      team: ${{ matrix.leg.team }}
       use-tuist: ${{ inputs.use-tuist }}
       pre-build-cache-path: ${{ inputs.pre-build-cache-path }}
       pre-build-cache-key: ${{ inputs.pre-build-cache-key }}
@@ -199,9 +206,9 @@ jobs:
       DEVELOPER_ID_P12_BASE64: ${{ matrix.leg.cert-secret != '' && secrets[matrix.leg.cert-secret] || secrets.DEVELOPER_ID_P12_BASE64 }}
       DEVELOPER_ID_PASSWORD:   ${{ matrix.leg.cert-password-secret != '' && secrets[matrix.leg.cert-password-secret] || secrets.DEVELOPER_ID_PASSWORD }}
       KEYCHAIN_PASSWORD:       ${{ secrets.KEYCHAIN_PASSWORD }}
-      ASC_KEY_ID:              ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID:           ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_BASE64:          ${{ secrets.ASC_KEY_BASE64 }}
+      ASC_KEY_ID:              ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ID_ALT' || 'ASC_KEY_ID'] }}
+      ASC_ISSUER_ID:           ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_ISSUER_ID_ALT' || 'ASC_ISSUER_ID'] }}
+      ASC_KEY_BASE64:          ${{ secrets[matrix.leg.asc-key == 'alt' && 'ASC_KEY_ALT_BASE64' || 'ASC_KEY_BASE64'] }}
       SHARED_WORKFLOWS_TOKEN:  ${{ secrets.SHARED_WORKFLOWS_TOKEN }}
 
   publish-release:

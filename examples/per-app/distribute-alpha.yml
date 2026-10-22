@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   alpha:
-    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.2
+    uses: LeanBytes/workflows-macos/.github/workflows/distribute-alpha.yml@v0.6.3
     # The same list as distribute.yml, minus Sparkle and Jira.
     secrets:
       APPLE_DISTR_P12_BASE64:         ${{ secrets.APPLE_DISTR_P12_BASE64 }}
@@ -55,6 +55,7 @@ jobs:
       ASC_KEY_BASE64:                 ${{ secrets.ASC_KEY_BASE64 }}
       AWS_ACCESS_KEY_ID:              ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY:          ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # A leg in another Apple team: the *_ALT lines from distribute.yml.
       # SHARED_WORKFLOWS_TOKEN:       ${{ secrets.SHARED_WORKFLOWS_TOKEN }}        # only if workflows-macos is a private fork
     with:
       product-id: ${{ inputs.product-id }}

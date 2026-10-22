@@ -12,15 +12,19 @@
   profiles.py cleanup --out DIR
       Removes exactly the profiles `fetch --install` added.
 
-  profiles.py archive-args --profiles DIR/profiles.json --type TYPE --cert NAME
+  profiles.py archive-args --profiles DIR/profiles.json --type TYPE --cert NAME [--team ID]
       Prints the xcodebuild archive settings, one per line, that let every target
       (the app and each extension) pick its own profile by bundle ID.
 
   profiles.py export-options --profiles DIR/profiles.json --type TYPE --archive X.xcarchive
                              --method METHOD --cert NAME [--installer-cert NAME]
-                             [--internal-only true|false] --out PLIST
+                             [--internal-only true|false] [--team ID] --out PLIST
       Matches every app and extension in the archive to its profile by bundle ID
       and writes the ExportOptions.plist that signs each of them.
+
+  With --team, both fail when the profiles belong to another team: the leg got
+  another team's App Store Connect key. A profile accepts only its own team's
+  certificates, so the signature can't end up in another team either.
 
   profiles.py selftest
       Offline check of the token signature, the profile choice, the install and
@@ -86,7 +90,8 @@ def env_token():
     if not (os.environ.get("ASC_KEY_BASE64") or os.environ.get("ASC_KEY_PATH")):
         missing.append("ASC_KEY_BASE64 (or ASC_KEY_PATH)")
     if missing:
-        sys.exit("profiles: set " + ", ".join(missing) + " — the App Store Connect key downloads the profiles")
+        sys.exit("profiles: set " + ", ".join(missing) + " — the App Store Connect key downloads the profiles"
+                 ' (a leg with "asc-key": "alt" takes ASC_KEY_ID_ALT, ASC_ISSUER_ID_ALT and ASC_KEY_ALT_BASE64)')
     key_id, issuer = os.environ["ASC_KEY_ID"], os.environ["ASC_ISSUER_ID"]
     if os.environ.get("ASC_KEY_PATH"):
         return token(key_id, issuer, os.environ["ASC_KEY_PATH"])
@@ -199,6 +204,16 @@ def c99(text):
     return "_" + text if text[:1].isdigit() else text
 
 
+def same_team(args, profiles):
+    """With --team, every profile must belong to that team. An App Store Connect key
+    sees only its own team's profiles, so another team here means the leg got the
+    wrong key ("asc-key") — and a build signed in that team would ship."""
+    teams = sorted({p["team"] for p in profiles})
+    if args.team and teams != [args.team]:
+        sys.exit(f"profiles: the {args.type} profiles belong to team {', '.join(teams)}, but this leg signs for "
+                 f"team {args.team}; give the leg that team's App Store Connect key (\"asc-key\")")
+
+
 def archive_args(args):
     # A profile named on the command line applies to every target, which signs an
     # extension with the app's profile. Indirection instead: each target looks up
@@ -210,6 +225,7 @@ def archive_args(args):
     profiles = {b: p for b, p in json.loads(Path(args.profiles).read_text()).get(args.type, {}).items() if b != "?"}
     if not profiles:
         sys.exit(f"profiles: no active {args.type} profile for this team; create one per bundle ID in the developer portal")
+    same_team(args, profiles.values())
     team = next(iter(profiles.values()))["team"]
     print("\n".join(["CODE_SIGN_STYLE=Manual", f"DEVELOPMENT_TEAM={team}", f"CODE_SIGN_IDENTITY={args.cert}",
                      "PROVISIONING_PROFILE_SPECIFIER=$(PP_$(PRODUCT_BUNDLE_IDENTIFIER:c99extidentifier))"]
@@ -229,17 +245,19 @@ def bundles_in(archive):
 
 def export_options(args):
     profiles = json.loads(Path(args.profiles).read_text()).get(args.type, {})
-    mapping, team = {}, ""
+    mapping, used, team = {}, [], ""
     for i, (path, bundle) in enumerate(bundles_in(args.archive)):
         p = profiles.get(bundle)
         if p:
             mapping[bundle] = p["uuid"]  # the UUID, not the name: names aren't unique
+            used.append(p)
             team = team or p["team"]
             print(f"{path.name:32} {bundle:40} {p['name']}")
         elif i == 0:
             sys.exit(f"profiles: no active {args.type} profile for {bundle}; create it once in the developer portal")
         else:
             print(f"{path.name:32} {bundle:40} no {args.type} profile (export fails if it needs one)")
+    same_team(args, used)
     opts = {"method": args.method, "destination": "export", "signingStyle": "manual",
             "teamID": team, "signingCertificate": args.cert, "provisioningProfiles": mapping}
     if args.installer_cert:
@@ -320,7 +338,7 @@ def selftest(_):
         def opts(**kw):
             ns = dict(profiles=d / "p.json", type="IOS_APP_STORE", archive=d / "t.xcarchive",
                       method="app-store-connect", cert="Apple Distribution", installer_cert=None,
-                      internal_only=False, out=d / "o.plist")
+                      internal_only=False, team="", out=d / "o.plist")
             ns.update(kw)
             with contextlib.redirect_stdout(io.StringIO()):
                 export_options(argparse.Namespace(**ns))
@@ -334,13 +352,31 @@ def selftest(_):
         assert "manageAppVersionAndBuildNumber" not in o and "uploadSymbols" not in o, o
 
         assert c99("io.leanbytes.flowmoose-beta") == "io_leanbytes_flowmoose_beta" and c99("1x") == "_1x"
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            archive_args(argparse.Namespace(profiles=d / "p.json", type="IOS_APP_STORE", cert="Apple Distribution"))
-        assert buf.getvalue().splitlines() == [
+        def args(**kw):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                archive_args(argparse.Namespace(**{**dict(profiles=d / "p.json", type="IOS_APP_STORE",
+                                                          cert="Apple Distribution", team=""), **kw}))
+            return buf.getvalue().splitlines()
+        assert args() == [
             "CODE_SIGN_STYLE=Manual", "DEVELOPMENT_TEAM=TEAM1", "CODE_SIGN_IDENTITY=Apple Distribution",
             "PROVISIONING_PROFILE_SPECIFIER=$(PP_$(PRODUCT_BUNDLE_IDENTIFIER:c99extidentifier))",
-            "PP_com_t=U1", "PP_com_t_w=U2"], buf.getvalue()
+            "PP_com_t=U1", "PP_com_t_w=U2"], args()
+
+        # --team: a leg that states its team fails on another team's profiles (#38).
+        assert args(team="TEAM1")[1] == "DEVELOPMENT_TEAM=TEAM1" and opts(team="TEAM1")["teamID"] == "TEAM1"
+        (d / "p2.json").write_text(json.dumps({"IOS_APP_STORE": {
+            "com.t": {"name": "T", "uuid": "U1", "team": "TEAM1"},
+            "com.t.w": {"name": "W", "uuid": "U2", "team": "TEAM2"}}}))
+        for call, want in ((lambda: args(team="OTHER"), "belong to team TEAM1, but this leg signs for team OTHER"),
+                           (lambda: opts(team="OTHER"), "belong to team TEAM1, but this leg signs for team OTHER"),
+                           (lambda: opts(profiles=d / "p2.json", team="TEAM1"), "belong to team TEAM1, TEAM2")):
+            try:
+                call()
+            except SystemExit as e:
+                assert want in str(e), e
+            else:
+                raise AssertionError(f"no failure: {want}")
     print("selftest ok")
 
 
@@ -358,12 +394,14 @@ def main():
     a = sub.add_parser("archive-args")
     for name in ("--profiles", "--type", "--cert"):
         a.add_argument(name, required=True)
+    a.add_argument("--team", default="", help="the leg's Apple team ID; profiles of another team fail")
     a.set_defaults(run=archive_args)
     e = sub.add_parser("export-options")
     for name in ("--profiles", "--type", "--archive", "--method", "--cert", "--out"):
         e.add_argument(name, required=True)
     e.add_argument("--installer-cert")
     e.add_argument("--internal-only", default="false", help="true marks an App Store build internal-only")
+    e.add_argument("--team", default="", help="the leg's Apple team ID; profiles of another team fail")
     e.set_defaults(run=export_options)
     sub.add_parser("selftest").set_defaults(run=selftest)
     args = ap.parse_args()
