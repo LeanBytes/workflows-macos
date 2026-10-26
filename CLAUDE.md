@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Moved to `LeanBytes/workflows-apple` as of v0.6.5 — do new work there.** This repo keeps its tags (up to v0.6.4) for callers still pinned to them and takes only v0.5 fixes on `maint-v0.5`. It is archived once no app points at it. A new repo rather than a GitHub rename, because GitHub doesn't forward `uses:` to a renamed repo.
+
 ## Repository purpose
 
 The **canonical shared CI/CD workflows for every LeanBytes and sarensw Apple app** — iPhone/iPad (App Store via TestFlight, Ad Hoc) and Mac (Developer ID Direct with Sparkle, Mac App Store via TestFlight). Each app repo carries four tiny trigger-only shells that call the orchestrators here via `uses: LeanBytes/workflows-macos/.github/workflows/<orchestrator>.yml@<tag>`.

@@ -1,5 +1,7 @@
 # workflows-macos
 
+> **Moved to [`LeanBytes/workflows-apple`](https://github.com/LeanBytes/workflows-apple) as of v0.6.5.** In your shells, change `LeanBytes/workflows-macos` to `LeanBytes/workflows-apple` and the tag to `@v0.6.5` ([migration guide](https://github.com/LeanBytes/workflows-apple/blob/main/MIGRATING.md)). The tags here, up to v0.6.4, keep working, and v0.5.x fixes still land here on `maint-v0.5`. This repo is archived once no app points at it.
+
 Reusable GitHub Actions workflows for Apple app distribution: **iPhone and iPad** (App Store via TestFlight, and Ad Hoc for registered devices) and **Mac** (Developer ID Direct with Sparkle, and the Mac App Store via TestFlight). Drop them into any app repo that ships one or more of those channels.
 
 > **Heads up — strongly opinionated.** These workflows are tailored to how Stephan Arenswald (personal) and **LeanBytes** ship apps. They power **MacPacker**, **FlowMoose**, **FileFillet** and the LeanBytes iPhone apps in production. The choices baked in — Developer ID + App Store driven from a single repo, Sparkle 2 with stable + beta channels, AWS S3 for direct-download hosting in `eu-central-1`, timestamp-based build numbers, provisioning profiles fetched from App Store Connect at build time, one self-contained `Config/products/<id>.json` per product (build identity + inline changelog) as the source of truth — reflect that specific use case. If your distribution model is different, expect to patch rather than just configure.
